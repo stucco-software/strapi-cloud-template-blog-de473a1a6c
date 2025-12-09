@@ -1,0 +1,22 @@
+{
+  "kind": "collectionType",
+  "collectionName": "static_resources",
+  "info": {
+    "singularName": "static-resource",
+    "pluralName": "static-resources",
+    "displayName": "Static Resources"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "Name": {
+      "type": "string",
+      "required": true
+    },
+    "Link": {
+      "type": "string"
+    }
+  }
+}

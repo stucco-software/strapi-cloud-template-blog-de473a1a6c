@@ -1,0 +1,29 @@
+{
+  "kind": "collectionType",
+  "collectionName": "sponsors",
+  "info": {
+    "singularName": "sponsor",
+    "pluralName": "sponsors",
+    "displayName": "Sponsors"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "Name": {
+      "type": "string",
+      "required": true
+    },
+    "Logo": {
+      "type": "media",
+      "multiple": false,
+      "allowedTypes": [
+        "images",
+        "files",
+        "videos",
+        "audios"
+      ]
+    }
+  }
+}
