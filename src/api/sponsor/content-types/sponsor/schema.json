@@ -24,6 +24,12 @@
         "videos",
         "audios"
       ]
+    },
+    "sponsorOf": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::chapter.chapter",
+      "inversedBy": "sponsors"
     }
   }
 }

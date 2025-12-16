@@ -484,6 +484,7 @@ export interface ApiArticleArticle extends Struct.CollectionTypeSchema {
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 80;
       }>;
+    eventFor: Schema.Attribute.Relation<'manyToOne', 'api::chapter.chapter'>;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<
       'oneToMany',
@@ -575,15 +576,20 @@ export interface ApiChapterChapter extends Struct.CollectionTypeSchema {
   };
   attributes: {
     board: Schema.Attribute.Relation<
-      'oneToMany',
+      'manyToMany',
       'plugin::users-permissions.user'
     >;
     Contact: Schema.Attribute.Email;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    editors: Schema.Attribute.Relation<
+      'manyToMany',
+      'plugin::users-permissions.user'
+    >;
+    events: Schema.Attribute.Relation<'oneToMany', 'api::article.article'>;
     leadership: Schema.Attribute.Relation<
-      'oneToMany',
+      'manyToMany',
       'plugin::users-permissions.user'
     >;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
@@ -593,12 +599,12 @@ export interface ApiChapterChapter extends Struct.CollectionTypeSchema {
     > &
       Schema.Attribute.Private;
     members: Schema.Attribute.Relation<
-      'oneToMany',
+      'manyToMany',
       'plugin::users-permissions.user'
     >;
-    partners: Schema.Attribute.Relation<'oneToMany', 'api::partner.partner'>;
+    partners: Schema.Attribute.Relation<'manyToMany', 'api::partner.partner'>;
     publishedAt: Schema.Attribute.DateTime;
-    sponsors: Schema.Attribute.Relation<'oneToMany', 'api::sponsor.sponsor'>;
+    sponsors: Schema.Attribute.Relation<'manyToMany', 'api::sponsor.sponsor'>;
     Title: Schema.Attribute.String &
       Schema.Attribute.Required &
       Schema.Attribute.Unique;
@@ -688,6 +694,7 @@ export interface ApiPartnerPartner extends Struct.CollectionTypeSchema {
       Schema.Attribute.Private;
     Logo: Schema.Attribute.Media<'images' | 'files' | 'videos' | 'audios'>;
     Name: Schema.Attribute.String & Schema.Attribute.Required;
+    partnerOf: Schema.Attribute.Relation<'manyToMany', 'api::chapter.chapter'>;
     publishedAt: Schema.Attribute.DateTime;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
@@ -718,6 +725,7 @@ export interface ApiSponsorSponsor extends Struct.CollectionTypeSchema {
     Logo: Schema.Attribute.Media<'images' | 'files' | 'videos' | 'audios'>;
     Name: Schema.Attribute.String & Schema.Attribute.Required;
     publishedAt: Schema.Attribute.DateTime;
+    sponsorOf: Schema.Attribute.Relation<'manyToMany', 'api::chapter.chapter'>;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
@@ -1238,10 +1246,11 @@ export interface PluginUsersPermissionsUser
   };
   options: {
     draftAndPublish: false;
-    timestamps: true;
   };
   attributes: {
     blocked: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    boardOf: Schema.Attribute.Relation<'manyToMany', 'api::chapter.chapter'>;
+    canEdit: Schema.Attribute.Relation<'manyToMany', 'api::chapter.chapter'>;
     confirmationToken: Schema.Attribute.String & Schema.Attribute.Private;
     confirmed: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     createdAt: Schema.Attribute.DateTime;
@@ -1252,12 +1261,14 @@ export interface PluginUsersPermissionsUser
       Schema.Attribute.SetMinMaxLength<{
         minLength: 6;
       }>;
+    leaderOf: Schema.Attribute.Relation<'manyToMany', 'api::chapter.chapter'>;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<
       'oneToMany',
       'plugin::users-permissions.user'
     > &
       Schema.Attribute.Private;
+    memberOf: Schema.Attribute.Relation<'manyToMany', 'api::chapter.chapter'>;
     password: Schema.Attribute.Password &
       Schema.Attribute.Private &
       Schema.Attribute.SetMinMaxLength<{

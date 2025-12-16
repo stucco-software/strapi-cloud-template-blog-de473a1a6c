@@ -24,6 +24,12 @@
         "videos",
         "audios"
       ]
+    },
+    "partnerOf": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::chapter.chapter",
+      "inversedBy": "partners"
     }
   }
 }

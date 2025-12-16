@@ -21,28 +21,45 @@
     },
     "members": {
       "type": "relation",
-      "relation": "oneToMany",
-      "target": "plugin::users-permissions.user"
+      "relation": "manyToMany",
+      "target": "plugin::users-permissions.user",
+      "mappedBy": "memberOf"
     },
     "board": {
       "type": "relation",
-      "relation": "oneToMany",
-      "target": "plugin::users-permissions.user"
+      "relation": "manyToMany",
+      "target": "plugin::users-permissions.user",
+      "mappedBy": "boardOf"
     },
     "leadership": {
       "type": "relation",
-      "relation": "oneToMany",
-      "target": "plugin::users-permissions.user"
+      "relation": "manyToMany",
+      "target": "plugin::users-permissions.user",
+      "mappedBy": "leaderOf"
     },
     "partners": {
       "type": "relation",
-      "relation": "oneToMany",
-      "target": "api::partner.partner"
+      "relation": "manyToMany",
+      "target": "api::partner.partner",
+      "mappedBy": "partnerOf"
     },
     "sponsors": {
       "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::sponsor.sponsor",
+      "mappedBy": "sponsorOf"
+    },
+    "events": {
+      "type": "relation",
       "relation": "oneToMany",
-      "target": "api::sponsor.sponsor"
+      "target": "api::article.article",
+      "mappedBy": "eventFor"
+    },
+    "editors": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "plugin::users-permissions.user",
+      "mappedBy": "canEdit"
     }
   }
 }
