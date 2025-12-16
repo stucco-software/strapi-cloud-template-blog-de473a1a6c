@@ -52,7 +52,7 @@
     "events": {
       "type": "relation",
       "relation": "oneToMany",
-      "target": "api::article.article",
+      "target": "api::event.event",
       "mappedBy": "eventFor"
     },
     "editors": {

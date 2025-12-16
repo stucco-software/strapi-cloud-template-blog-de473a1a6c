@@ -16,6 +16,12 @@
     },
     "DateTime": {
       "type": "datetime"
+    },
+    "eventFor": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::chapter.chapter",
+      "inversedBy": "events"
     }
   }
 }

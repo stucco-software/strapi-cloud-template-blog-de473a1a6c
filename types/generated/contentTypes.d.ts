@@ -484,7 +484,6 @@ export interface ApiArticleArticle extends Struct.CollectionTypeSchema {
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 80;
       }>;
-    eventFor: Schema.Attribute.Relation<'manyToOne', 'api::chapter.chapter'>;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<
       'oneToMany',
@@ -587,7 +586,7 @@ export interface ApiChapterChapter extends Struct.CollectionTypeSchema {
       'manyToMany',
       'plugin::users-permissions.user'
     >;
-    events: Schema.Attribute.Relation<'oneToMany', 'api::article.article'>;
+    events: Schema.Attribute.Relation<'oneToMany', 'api::event.event'>;
     leadership: Schema.Attribute.Relation<
       'manyToMany',
       'plugin::users-permissions.user'
@@ -629,6 +628,7 @@ export interface ApiEventEvent extends Struct.CollectionTypeSchema {
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
     DateTime: Schema.Attribute.DateTime;
+    eventFor: Schema.Attribute.Relation<'manyToOne', 'api::chapter.chapter'>;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<'oneToMany', 'api::event.event'> &
       Schema.Attribute.Private;
