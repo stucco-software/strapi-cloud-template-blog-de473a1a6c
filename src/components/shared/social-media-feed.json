@@ -1,0 +1,21 @@
+{
+  "collectionName": "components_shared_social_media_feeds",
+  "info": {
+    "displayName": "Social Media Feed",
+    "icon": "earth"
+  },
+  "options": {},
+  "attributes": {
+    "title": {
+      "type": "string"
+    },
+    "platform": {
+      "type": "enumeration",
+      "enum": ["Instagram", "Facebook", "LinkedIn", "X", "YouTube"]
+    },
+    "feedUrl": {
+      "type": "string",
+      "required": true
+    }
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "kind": "singleType",
+  "collectionName": "top_navs",
+  "info": {
+    "singularName": "top-nav",
+    "pluralName": "top-navs",
+    "displayName": "Top Nav"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "logo": {
+      "type": "media",
+      "multiple": false,
+      "allowedTypes": ["images"]
+    },
+    "phoneNumber": {
+      "type": "string"
+    },
+    "emailAddress": {
+      "type": "email"
+    },
+    "navigation": {
+      "type": "component",
+      "component": "shared.navigation",
+      "repeatable": false
+    }
+  }
+}

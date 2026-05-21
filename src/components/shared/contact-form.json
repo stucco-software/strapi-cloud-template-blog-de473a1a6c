@@ -1,0 +1,28 @@
+{
+  "collectionName": "components_shared_contact_forms",
+  "info": {
+    "displayName": "Contact Form",
+    "icon": "envelop"
+  },
+  "options": {},
+  "attributes": {
+    "title": {
+      "type": "string"
+    },
+    "intro": {
+      "type": "text"
+    },
+    "fields": {
+      "type": "component",
+      "component": "shared.form-field",
+      "repeatable": true
+    },
+    "submitLabel": {
+      "type": "string",
+      "default": "Send"
+    },
+    "notificationEmails": {
+      "type": "string"
+    }
+  }
+}

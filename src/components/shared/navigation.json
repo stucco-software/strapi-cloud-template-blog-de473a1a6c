@@ -1,0 +1,15 @@
+{
+  "collectionName": "components_shared_navigations",
+  "info": {
+    "displayName": "Navigation",
+    "icon": "apps"
+  },
+  "options": {},
+  "attributes": {
+    "items": {
+      "type": "component",
+      "component": "shared.nav-item",
+      "repeatable": true
+    }
+  }
+}

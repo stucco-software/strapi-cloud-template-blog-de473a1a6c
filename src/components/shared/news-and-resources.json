@@ -1,0 +1,28 @@
+{
+  "collectionName": "components_shared_news_and_resources",
+  "info": {
+    "displayName": "News & Resources",
+    "icon": "file"
+  },
+  "options": {},
+  "attributes": {
+    "title": {
+      "type": "string"
+    },
+    "link": {
+      "type": "component",
+      "component": "shared.cta",
+      "repeatable": false
+    },
+    "resources": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::resource.resource"
+    },
+    "newsItems": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::news-item.news-item"
+    }
+  }
+}

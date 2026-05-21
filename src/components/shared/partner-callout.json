@@ -1,0 +1,26 @@
+{
+  "collectionName": "components_shared_partner_callouts",
+  "info": {
+    "displayName": "Partner Callout",
+    "icon": "crown"
+  },
+  "options": {},
+  "attributes": {
+    "title": {
+      "type": "string"
+    },
+    "body": {
+      "type": "blocks"
+    },
+    "link": {
+      "type": "component",
+      "component": "shared.cta",
+      "repeatable": false
+    },
+    "partner": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::partner.partner"
+    }
+  }
+}

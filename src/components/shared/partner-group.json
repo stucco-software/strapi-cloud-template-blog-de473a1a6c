@@ -1,0 +1,18 @@
+{
+  "collectionName": "components_shared_partner_groups",
+  "info": {
+    "displayName": "Partner Group",
+    "icon": "crown"
+  },
+  "options": {},
+  "attributes": {
+    "title": {
+      "type": "string"
+    },
+    "partners": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::partner.partner"
+    }
+  }
+}

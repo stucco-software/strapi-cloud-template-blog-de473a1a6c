@@ -1,0 +1,23 @@
+{
+  "collectionName": "components_shared_member_groups",
+  "info": {
+    "displayName": "Member Group",
+    "icon": "user"
+  },
+  "options": {},
+  "attributes": {
+    "title": {
+      "type": "string"
+    },
+    "link": {
+      "type": "component",
+      "component": "shared.cta",
+      "repeatable": false
+    },
+    "members": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "plugin::users-permissions.user"
+    }
+  }
+}
