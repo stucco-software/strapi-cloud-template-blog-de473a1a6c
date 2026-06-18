@@ -1,4 +1,40 @@
-# 🚀 Getting started with Strapi
+# AREAA Strapi CMS
+
+Headless CMS (Strapi v5) powering the AREAA website — chapters, microsite pages,
+events, partners, members, and global site settings. The Astro frontend
+(`../areaa-frontend`) fetches content from this app's REST API.
+
+## Local Development
+
+**Prerequisites:** Node 20–24, npm, and `openssl` (preinstalled on macOS/Linux).
+
+```bash
+make setup   # one-time: npm install + generate .env with fresh secrets
+make seed    # populate sample content + grant Public read permissions
+make dev     # serve admin + REST API at http://localhost:1337
+```
+
+Run `make seed` while `make dev` is **stopped** — both open the same SQLite file.
+On the first `make dev`, create your admin account at <http://localhost:1337/admin>.
+
+`make help` lists every target:
+
+| Target | Description |
+|--------|-------------|
+| `make setup` | Install deps + generate `.env` (idempotent) |
+| `make env`   | Generate `.env` with fresh secrets (no-op if it exists) |
+| `make seed`  | Seed sample content + Public read permissions (idempotent) |
+| `make fresh` | Wipe the SQLite DB and re-seed from scratch |
+| `make dev`   | Start Strapi in develop mode |
+| `make clean` | Remove the local SQLite DB |
+
+The dev database is **SQLite** (`.tmp/data.db`) — no external DB required. The seed
+grants the **Public** role read access so the token-less SSR frontend can fetch
+content; without it the REST API returns `403`.
+
+---
+
+# 🚀 Strapi CLI reference
 
 Strapi comes with a full featured [Command Line Interface](https://docs.strapi.io/dev-docs/cli) (CLI) which lets you scaffold and manage your project in seconds.
 
