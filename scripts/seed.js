@@ -595,9 +595,21 @@ async function main() {
   // the public role.
   const singleTypeReads = ['api::global.global', 'api::top-nav.top-nav', 'api::footer.footer'];
 
+  // member-group.members targets plugin::users-permissions.user. Strapi strips
+  // relations to the protected user type unless the role can read it, so the
+  // member grids come back EMPTY without this `find`.
+  //
+  // ⚠️ This opens GET /api/users to the public. The page-level populate restricts
+  // fields per request, but the raw users endpoint does not. Production hardening
+  // (colleague's domain): mark sensitive User fields (email, status, bio,
+  // duesPaidThrough) `"private": true` in the user content-type schema, and/or
+  // populate members via a custom page controller instead of opening /api/users.
+  const userReads = ['plugin::users-permissions.user.find'];
+
   const readActions = [
     ...collectionReads.flatMap((uid) => [`${uid}.find`, `${uid}.findOne`]),
     ...singleTypeReads.map((uid) => `${uid}.find`),
+    ...userReads,
   ];
 
   let grantedCount = 0;
