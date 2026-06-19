@@ -571,6 +571,65 @@ async function main() {
     },
   });
 
+  // --- public read permissions ----------------------------------------------
+  // Grant the Public (unauthenticated) role read access so the SSR frontend can
+  // fetch content without an API token. Idempotent — skips already-enabled
+  // actions, so re-running the seed is safe.
+  const publicRole = await app.db
+    .query('plugin::users-permissions.role')
+    .findOne({ where: { type: 'public' } });
+
+  // Collection types: allow both list (find) and detail (findOne).
+  const collectionReads = [
+    'api::chapter.chapter',
+    'api::page.page',
+    'api::event.event',
+    'api::partner.partner',
+    'api::committee.committee',
+    'api::news-item.news-item',
+    'api::resource.resource',
+    'api::faq.faq',
+  ];
+  // Single types: only `find`. NOTE: form-submission is intentionally omitted —
+  // the frontend writes submissions server-to-server with an API token, not via
+  // the public role.
+  const singleTypeReads = ['api::global.global', 'api::top-nav.top-nav', 'api::footer.footer'];
+
+  // member-group.members targets plugin::users-permissions.user. Strapi strips
+  // relations to the protected user type unless the role can read it, so the
+  // member grids come back EMPTY without this `find`.
+  //
+  // ⚠️ This opens GET /api/users to the public. The page-level populate restricts
+  // fields per request, but the raw users endpoint does not. Production hardening
+  // (colleague's domain): mark sensitive User fields (email, status, bio,
+  // duesPaidThrough) `"private": true` in the user content-type schema, and/or
+  // populate members via a custom page controller instead of opening /api/users.
+  const userReads = ['plugin::users-permissions.user.find'];
+
+  const readActions = [
+    ...collectionReads.flatMap((uid) => [`${uid}.find`, `${uid}.findOne`]),
+    ...singleTypeReads.map((uid) => `${uid}.find`),
+    ...userReads,
+  ];
+
+  let grantedCount = 0;
+  for (const action of readActions) {
+    const existing = await app.db
+      .query('plugin::users-permissions.permission')
+      .findOne({ where: { action, role: publicRole.id } });
+    if (!existing) {
+      await app.db
+        .query('plugin::users-permissions.permission')
+        .create({ data: { action, role: publicRole.id } });
+      grantedCount += 1;
+    }
+  }
+
+  console.log(
+    `Public role: ${readActions.length} read actions ensured ` +
+      `(${grantedCount} newly granted).`
+  );
+
   console.log(
     `Seeded: ${chapterData.length} chapters, ${members.length} members, ` +
       `${partners.length} partners, ${committeeData.length} committees, ` +
