@@ -1,8 +1,8 @@
 {
-  "collectionName": "components_shared_sections",
+  "collectionName": "components_shared_heroes",
   "info": {
-    "displayName": "Section",
-    "icon": "layout"
+    "displayName": "Hero",
+    "icon": "bold"
   },
   "options": {},
   "attributes": {
