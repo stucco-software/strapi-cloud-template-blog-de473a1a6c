@@ -60,6 +60,21 @@ export interface SharedGallery extends Struct.ComponentSchema {
   };
 }
 
+export interface SharedHero extends Struct.ComponentSchema {
+  collectionName: 'components_shared_heroes';
+  info: {
+    displayName: 'Hero';
+    icon: 'bold';
+  };
+  attributes: {
+    body: Schema.Attribute.Blocks;
+    figure: Schema.Attribute.Media<'images' | 'files' | 'videos' | 'audios'>;
+    primaryCta: Schema.Attribute.Component<'shared.cta', false>;
+    secondaryCta: Schema.Attribute.Component<'shared.cta', false>;
+    title: Schema.Attribute.String;
+  };
+}
+
 export interface SharedMemberGroup extends Struct.ComponentSchema {
   collectionName: 'components_shared_member_groups';
   info: {
@@ -164,7 +179,6 @@ export interface SharedSection extends Struct.ComponentSchema {
   attributes: {
     body: Schema.Attribute.Blocks;
     figure: Schema.Attribute.Media<'images' | 'files' | 'videos' | 'audios'>;
-    isHero: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     primaryCta: Schema.Attribute.Component<'shared.cta', false>;
     secondaryCta: Schema.Attribute.Component<'shared.cta', false>;
     title: Schema.Attribute.String;
@@ -234,6 +248,7 @@ declare module '@strapi/strapi' {
       'shared.cta': SharedCta;
       'shared.form-field': SharedFormField;
       'shared.gallery': SharedGallery;
+      'shared.hero': SharedHero;
       'shared.member-group': SharedMemberGroup;
       'shared.nav-item': SharedNavItem;
       'shared.nav-link': SharedNavLink;

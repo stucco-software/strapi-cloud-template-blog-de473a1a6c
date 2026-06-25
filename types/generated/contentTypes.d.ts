@@ -736,6 +736,7 @@ export interface ApiPagePage extends Struct.CollectionTypeSchema {
     chapter: Schema.Attribute.Relation<'manyToOne', 'api::chapter.chapter'>;
     components: Schema.Attribute.DynamicZone<
       [
+        'shared.hero',
         'shared.section',
         'shared.news-and-resources',
         'shared.upcoming-events',
