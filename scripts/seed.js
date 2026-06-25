@@ -320,9 +320,8 @@ async function main() {
       keywords: 'real estate, AREAA, membership, AANHPI',
       components: [
         {
-          __component: 'shared.section',
+          __component: 'shared.hero',
           title: 'Primary Value Statement Goes Here',
-          isHero: true,
           figure: img,
           body: [
             p(
@@ -427,9 +426,8 @@ async function main() {
         chapter: chapter.documentId,
         components: [
           {
-            __component: 'shared.section',
+            __component: 'shared.hero',
             title: 'Our Chapter',
-            isHero: true,
             figure: img,
             body: [
               p(

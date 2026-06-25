@@ -45,6 +45,9 @@ const query = qs.stringify(
       chapter: { fields: ['name', 'slug'] },
       components: {
         on: {
+          'shared.hero': {
+            populate: { figure: true, primaryCta: true, secondaryCta: true },
+          },
           'shared.section': {
             populate: { figure: true, primaryCta: true, secondaryCta: true },
           },
@@ -103,8 +106,8 @@ async function main() {
     components.map((c) => c.__component.replace('shared.', '')).join(', ')
   );
 
-  const hero = components.find((c) => c.__component === 'shared.section' && c.isHero);
-  record('hero section -> figure (two-level media)', !!hero?.figure?.url, hero?.figure?.url || 'missing');
+  const hero = components.find((c) => c.__component === 'shared.hero');
+  record('hero -> figure (two-level media)', !!hero?.figure?.url, hero?.figure?.url || 'missing');
 
   const mg = components.find((c) => c.__component === 'shared.member-group');
   const members = mg?.members || [];
