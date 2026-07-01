@@ -307,18 +307,83 @@ async function main() {
   }
 
   // --- faqs -----------------------------------------------------------------
+  // Questions mirror the current live AREAA FAQ page. "Who are we?" uses the real
+  // published copy; the remaining answers are drafts — replace them with final
+  // copy in the Strapi admin (the /faq page renders whatever is stored here).
   const faqData = [
-    { question: 'How do I become a member?', category: 'Membership' },
-    { question: 'What are the membership dues?', category: 'Membership' },
-    { question: 'How do I find my local chapter?', category: 'Chapters' },
-    { question: 'Can non-members attend events?', category: 'Events' },
+    {
+      question: 'Who are we?',
+      category: 'About',
+      answer: [
+        p(
+          "AREAA's members are real estate, mortgage, and housing professionals that serve the diverse Asian American and Pacific Islander (AAPI) market. AREAA is the only trade association dedicated to representing the interests of the AAPI real estate market nationwide and is the largest AAPI organization in North America."
+        ),
+        p(
+          'You do not need to be Asian American or Pacific Islander to be an AREAA member! Professionals of all cultural backgrounds who are interested in better supporting and serving the AAPI community and furthering the mission of increasing sustainable AAPI homeownership are welcome to join.'
+        ),
+      ],
+    },
+    {
+      question: 'What is AREAA?',
+      category: 'About',
+      answer: [
+        p(
+          'AREAA — the Asian Real Estate Association of America — is a national nonprofit trade organization dedicated to improving the lives of the AAPI community through sustainable homeownership. Founded in 2003, AREAA represents tens of thousands of real estate and housing professionals through chapters across North America.'
+        ),
+      ],
+    },
+    {
+      question: 'What are the benefits of having AREAA as a partner?',
+      category: 'Partnership',
+      answer: [
+        p(
+          'Partnering with AREAA connects your organization to the fastest-growing homebuying demographic in the country. Partners gain visibility across our national events, chapter network, and digital channels, plus opportunities to build lasting relationships with AAPI real estate and housing professionals.'
+        ),
+      ],
+    },
+    {
+      question: 'Want to join AREAA?',
+      category: 'Membership',
+      answer: [
+        p(
+          'Becoming a member is quick and easy. Visit our membership page to select your local chapter and complete your registration online. Membership connects you to a nationwide network, exclusive events, and professional development resources.'
+        ),
+      ],
+    },
+    {
+      question: 'How much does AREAA membership cost?',
+      category: 'Membership',
+      answer: [
+        p(
+          'Membership dues vary by chapter. You can see the exact prorated amount and annual renewal rate for your local chapter when you begin the registration process on our membership page.'
+        ),
+      ],
+    },
+    {
+      question: 'Can I attend other chapter events outside my local chapter?',
+      category: 'Events',
+      answer: [
+        p(
+          'Yes! AREAA membership is national. You are welcome to attend events hosted by any AREAA chapter, not just your local one — a great way to expand your network while traveling or connecting with other markets.'
+        ),
+      ],
+    },
+    {
+      question: 'How do I cancel my membership?',
+      category: 'Membership',
+      answer: [
+        p(
+          'AREAA memberships renew annually on July 1. To cancel, email contact@areaa.org before the July 1 renewal date and our team will assist you.'
+        ),
+      ],
+    },
   ];
   for (const f of faqData) {
     await docs('api::faq.faq').create({
       data: {
         question: f.question,
         category: f.category,
-        answer: [p('Sample answer content.')],
+        answer: f.answer,
       },
       ...pub,
     });
