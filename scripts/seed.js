@@ -32,6 +32,19 @@ async function main() {
   const docs = (uid) => app.documents(uid);
   const pub = { status: 'published' };
 
+  // Single types in v5: documents().update() is a no-op when the entry doesn't
+  // exist yet, leaving GET /api/<single-type> returning 404. Create-or-update
+  // explicitly. Same call shape as docs(uid).update({ data }) so call sites read
+  // the same.
+  const putSingle = (uid) => ({
+    update: async ({ data }) => {
+      const existing = await docs(uid).findFirst();
+      return existing
+        ? docs(uid).update({ documentId: existing.documentId, data })
+        : docs(uid).create({ data });
+    },
+  });
+
   // --- clean slate ----------------------------------------------------------
   const collectionUids = [
     'api::news-item.news-item',
@@ -520,23 +533,52 @@ async function main() {
   // --- single types ---------------------------------------------------------
   const navigation = {
     items: [
-      { label: 'About Us', url: '/about' },
+      {
+        label: 'About Us',
+        url: '/about',
+        children: [
+          { label: 'Delegate Board', url: '/about/delegate-board' },
+          { label: 'Executive Board', url: '/about/executive-board' },
+          { label: 'FAQ', url: '/faq' },
+          { label: 'Contact Us', url: '/contact' },
+        ],
+      },
       {
         label: 'Membership',
+        url: '/membership',
         children: [
           { label: 'Join AREAA', url: '/join' },
           { label: 'Member Benefits', url: '/membership' },
         ],
       },
       { label: 'Advocacy', url: '/advocacy' },
+      // Chapters renders as a search dropdown in the header (lists chapters
+      // from Strapi). The url is the fallback landing page.
       { label: 'Chapters', url: '/chapters' },
       { label: 'Events', url: '/events' },
-      { label: 'Programs', url: '/programs' },
-      { label: 'Media', url: '/media' },
+      {
+        label: 'Programs',
+        url: '/programs',
+        children: [
+          { label: 'A List', url: '/programs/a-list' },
+          { label: '10 X 30', url: '/programs/10x30' },
+          { label: 'Mentorship Program', url: '/programs/mentorship' },
+          { label: 'Webinar', url: '/programs/webinar' },
+        ],
+      },
+      {
+        label: 'Media',
+        url: '/media',
+        children: [
+          { label: 'State of Asia America', url: '/media/state-of-asia-america' },
+          { label: 'ARE Publications', url: '/media/are-publications' },
+          { label: 'Press Releases', url: '/media/press-releases' },
+        ],
+      },
     ],
   };
 
-  await docs('api::global.global').update({
+  await putSingle('api::global.global').update({
     data: {
       siteName: 'AREAA',
       siteDescription: 'The Asian Real Estate Association of America.',
@@ -546,7 +588,7 @@ async function main() {
     },
   });
 
-  await docs('api::top-nav.top-nav').update({
+  await putSingle('api::top-nav.top-nav').update({
     data: {
       logo: img,
       phoneNumber: '(619) 795-7873',
@@ -555,7 +597,7 @@ async function main() {
     },
   });
 
-  await docs('api::footer.footer').update({
+  await putSingle('api::footer.footer').update({
     data: {
       navigation,
       copyright: 'Copyright 2026 AREAA. All Rights Reserved.',
