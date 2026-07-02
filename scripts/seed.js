@@ -168,6 +168,41 @@ async function main() {
     });
   }
 
+  // --- national delegate board ----------------------------------------------
+  // AREAA's Delegate Board is the association's national governing body —
+  // chapter presidents and national committee leaders. Seeded as standalone
+  // users (no chapter relation, so they don't surface on chapter microsites)
+  // and grouped under a chapter-less "Delegate Board" committee that the
+  // /about/delegate-board page renders. `title` holds each member's board role.
+  const delegateData = [
+    { first: 'Manolito', last: 'Acebedo', title: 'Greater East Bay Chapter President' },
+    { first: 'Brenda', last: 'Barrett', title: 'Greater Denver Chapter President' },
+    { first: 'Chantal', last: 'Camarillo', title: 'Mortgage Committee Vice-Chair' },
+    { first: 'Ann', last: 'Chang', title: 'TheEdge Committee Vice-Chair' },
+    { first: 'Peter', last: 'Chang', title: 'Greater Los Angeles Chapter President' },
+    { first: 'Shirley', last: 'Chen', title: 'Tri-County Chapter President' },
+    { first: 'Phoenix', last: 'Chiang', title: 'Member Services Committee Vice-Chair' },
+    { first: 'Miriam', last: 'Crispin', title: 'Chapter Services Committee Chair' },
+  ];
+  const delegates = [];
+  for (const d of delegateData) {
+    const username = `${d.first}.${d.last}`.toLowerCase();
+    const user = await app.plugin('users-permissions').service('user').add({
+      username,
+      email: `${username}@areaa.example`,
+      password: 'Password123!',
+      provider: 'local',
+      confirmed: true,
+      role: authRole.id,
+      firstName: d.first,
+      lastName: d.last,
+      displayName: `${d.first} ${d.last}`,
+      status: 'Active',
+      title: d.title,
+    });
+    delegates.push(user);
+  }
+
   // --- committees -----------------------------------------------------------
   const committeeData = [
     { name: 'Executive Committee', chapter: 'aloha-hawaii' },
@@ -186,6 +221,20 @@ async function main() {
       ...pub,
     });
   }
+
+  // National Delegate Board — no chapter relation.
+  await docs('api::committee.committee').create({
+    data: {
+      name: 'Delegate Board',
+      description:
+        "AREAA's Delegate Board is the association's national governing body. " +
+        'Composed of chapter presidents and national committee leaders elected ' +
+        'from AREAA chapters across the country, it sets policy, ratifies the ' +
+        "annual budget, and elects the association's national officers.",
+      members: delegates.map((d) => d.id),
+    },
+    ...pub,
+  });
 
   // --- events ---------------------------------------------------------------
   // Two national events shown on both the Home page and chapter microsites,
@@ -740,7 +789,8 @@ async function main() {
 
   console.log(
     `Seeded: ${chapterData.length} chapters, ${members.length} members, ` +
-      `${partners.length} partners, ${committeeData.length} committees, ` +
+      `${delegates.length} delegates, ${partners.length} partners, ` +
+      `${committeeData.length + 1} committees, ` +
       `${nationalEvents.length + chapterData.length} events, ${resources.length} resources, ` +
       `${newsItems.length} news items, ${faqData.length} FAQs, ` +
       `${2 + chapterData.length} pages, 3 single types.`
