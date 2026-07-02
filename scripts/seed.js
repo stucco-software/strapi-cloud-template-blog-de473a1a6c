@@ -205,6 +205,7 @@ async function main() {
   const policySummit = await docs('api::event.event').create({
     data: {
       title: '2026 AREAA Policy Summit',
+      slug: '2026-areaa-policy-summit',
       startsAt: '2026-05-09T16:00:00.000Z',
       endsAt: '2026-05-09T21:00:00.000Z',
       location: 'Washington, DC',
@@ -218,6 +219,7 @@ async function main() {
   const reportWebinar = await docs('api::event.event').create({
     data: {
       title: 'State of Asia America Report Webinar',
+      slug: 'state-of-asia-america-report-webinar',
       startsAt: '2026-11-20T19:00:00.000Z',
       location: 'Online',
       locationUrl: 'https://example.com/webinar/state-of-asia-america',
@@ -235,6 +237,7 @@ async function main() {
     await docs('api::event.event').create({
       data: {
         title: `${chapters[slug].name} Summer Mixer`,
+        slug: `${slug}-summer-mixer`,
         startsAt: '2026-08-12T01:30:00.000Z',
         location: `${chapters[slug].name} — venue TBD`,
         memberPrice: 20,
