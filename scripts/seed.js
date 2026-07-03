@@ -203,6 +203,37 @@ async function main() {
     delegates.push(user);
   }
 
+  // --- national executive board ---------------------------------------------
+  // AREAA's Executive Board is the association's slate of national officers
+  // (President, Vice-President, Treasurer, …). Seeded like the delegates —
+  // chapter-less users grouped under a chapter-less "Executive Board" that the
+  // /about/executive-board page renders. Ordered by office rank, not
+  // alphabetically; `title` holds each officer's role.
+  const officerData = [
+    { first: 'Bryan', last: 'Ahn', title: '2026 President' },
+    { first: 'William', last: 'Wang', title: '2026 Vice-President' },
+    { first: 'Jamie', last: 'Tian', title: 'Immediate Past President' },
+    { first: 'Gary', last: 'Lai', title: '2026 Treasurer' },
+  ];
+  const officers = [];
+  for (const o of officerData) {
+    const username = `${o.first}.${o.last}`.toLowerCase();
+    const user = await app.plugin('users-permissions').service('user').add({
+      username,
+      email: `${username}@areaa.example`,
+      password: 'Password123!',
+      provider: 'local',
+      confirmed: true,
+      role: authRole.id,
+      firstName: o.first,
+      lastName: o.last,
+      displayName: `${o.first} ${o.last}`,
+      status: 'Active',
+      title: o.title,
+    });
+    officers.push(user);
+  }
+
   // --- committees -----------------------------------------------------------
   const committeeData = [
     { name: 'Executive Committee', chapter: 'aloha-hawaii' },
@@ -232,6 +263,22 @@ async function main() {
         'from AREAA chapters across the country, it sets policy, ratifies the ' +
         "annual budget, and elects the association's national officers.",
       members: delegates.map((d) => d.id),
+    },
+    ...pub,
+  });
+
+  // National Executive Board — no chapter relation. Distinct from the
+  // aloha-hawaii chapter "Executive Committee" above; the /about page fetches
+  // scoped to chapter-null so national and chapter bodies never collide.
+  await docs('api::committee.committee').create({
+    data: {
+      name: 'Executive Board',
+      description:
+        "AREAA's Executive Board is the association's slate of national " +
+        'officers — the President, Vice-President, Immediate Past President, and ' +
+        'Treasurer — who lead strategy, finances, and day-to-day governance ' +
+        'between Delegate Board meetings.',
+      members: officers.map((o) => o.id),
     },
     ...pub,
   });
@@ -789,8 +836,9 @@ async function main() {
 
   console.log(
     `Seeded: ${chapterData.length} chapters, ${members.length} members, ` +
-      `${delegates.length} delegates, ${partners.length} partners, ` +
-      `${committeeData.length + 1} committees, ` +
+      `${delegates.length} delegates, ${officers.length} officers, ` +
+      `${partners.length} partners, ` +
+      `${committeeData.length + 2} committees, ` +
       `${nationalEvents.length + chapterData.length} events, ${resources.length} resources, ` +
       `${newsItems.length} news items, ${faqData.length} FAQs, ` +
       `${2 + chapterData.length} pages, 3 single types.`
