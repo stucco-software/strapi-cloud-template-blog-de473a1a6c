@@ -919,14 +919,9 @@ async function main() {
           { label: 'Contact Us', url: '/contact' },
         ],
       },
-      {
-        label: 'Membership',
-        url: '/membership',
-        children: [
-          { label: 'Join AREAA', url: '/join' },
-          { label: 'Member Benefits', url: '/membership' },
-        ],
-      },
+      // Top-level link, no submenu — /membership redirects to /join (see
+      // astro.config redirects). Membership == Join AREAA in the IA.
+      { label: 'Membership', url: '/membership' },
       { label: 'Advocacy', url: '/advocacy' },
       // Chapters renders as a search dropdown in the header (lists chapters
       // from Strapi). The url is the fallback landing page.
