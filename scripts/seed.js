@@ -936,10 +936,13 @@ async function main() {
         label: 'Programs',
         url: '/programs',
         children: [
-          { label: 'A List', url: '/programs/a-list' },
-          { label: '10 X 30', url: '/programs/10x30' },
-          { label: 'Mentorship Program', url: '/programs/mentorship' },
-          { label: 'Webinar', url: '/programs/webinar' },
+          // Programs is a nav *grouping* only — each program page is served at a
+          // flat root slug (/a-list, not /programs/a-list) via the frontend
+          // catch-all. Deliberate IA call by the CMS team.
+          { label: 'A List', url: '/a-list' },
+          { label: '10 X 30', url: '/10x30' },
+          { label: 'Mentorship Program', url: '/mentorship' },
+          { label: 'Webinar', url: '/webinar' },
         ],
       },
       {
