@@ -44,7 +44,8 @@
         "shared.social-media-feed",
         "shared.video-embed",
         "shared.gallery",
-        "shared.contact-form"
+        "shared.contact-form",
+        "shared.faq"
       ]
     }
   }

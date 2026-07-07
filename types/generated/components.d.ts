@@ -28,6 +28,30 @@ export interface SharedCta extends Struct.ComponentSchema {
   };
 }
 
+export interface SharedFaq extends Struct.ComponentSchema {
+  collectionName: 'components_shared_faqs';
+  info: {
+    displayName: 'FAQ';
+    icon: 'question';
+  };
+  attributes: {
+    items: Schema.Attribute.Component<'shared.faq-item', true>;
+    title: Schema.Attribute.String;
+  };
+}
+
+export interface SharedFaqItem extends Struct.ComponentSchema {
+  collectionName: 'components_shared_faq_items';
+  info: {
+    displayName: 'FAQ Item';
+    icon: 'question';
+  };
+  attributes: {
+    answer: Schema.Attribute.Blocks;
+    question: Schema.Attribute.String & Schema.Attribute.Required;
+  };
+}
+
 export interface SharedFormField extends Struct.ComponentSchema {
   collectionName: 'components_shared_form_fields';
   info: {
@@ -246,6 +270,8 @@ declare module '@strapi/strapi' {
     export interface ComponentSchemas {
       'shared.contact-form': SharedContactForm;
       'shared.cta': SharedCta;
+      'shared.faq': SharedFaq;
+      'shared.faq-item': SharedFaqItem;
       'shared.form-field': SharedFormField;
       'shared.gallery': SharedGallery;
       'shared.hero': SharedHero;

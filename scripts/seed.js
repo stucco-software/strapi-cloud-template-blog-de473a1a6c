@@ -564,6 +564,218 @@ async function main() {
     ...pub,
   });
 
+  // --- Programs: A-List (served flat at /a-list via the catch-all) ----------
+  // Exercises the new shared.link-list (winners archive) + shared.faq (accordion)
+  // dynamic-zone components. Content transcribed from the live areaa.org A-List
+  // page; "View 20XX A-List"/winner links are placeholders (#) pending real URLs.
+  await docs('api::page.page').create({
+    data: {
+      title: "AREAA's A-List",
+      slug: 'a-list',
+      description:
+        "Apply for AREAA's 2026 A-List — honoring the best individual agents and teams in the AANHPI real estate community, powered by RealTrends Verified.",
+      keywords: 'AREAA, A-List, RealTrends, top producers, awards',
+      components: [
+        {
+          __component: 'shared.hero',
+          title: 'Apply for the 2026 A-List Today!',
+          body: [
+            p('Honoring the Best of the Best in AREAA'),
+            p(
+              'AREAA is thrilled to partner with RealTrends and their RealTrends ' +
+                'Verified program to once again create the AREAA A-List, which ' +
+                'honored hundreds of individual agents and teams last year.'
+            ),
+          ],
+          primaryCta: cta('View 2025 A-List', '#', 'Primary'),
+          secondaryCta: cta('View 2024 A-List', '#', 'Secondary'),
+        },
+        {
+          __component: 'shared.section',
+          body: [
+            p(
+              'AREAA members who qualify for RealTrends Verified — which includes ' +
+                "America's Best Real Estate Professionals and The Thousand — will " +
+                "also be considered for AREAA's A-List."
+            ),
+            p(
+              '• An individual must have closed at least 25 sides OR $10 million ' +
+                'in sales volume in 2025.\n' +
+                '• A team must have closed at least 40 sides OR $16 million in ' +
+                'sales volume in 2025.\n' +
+                '• The team lead must be an AREAA member.\n' +
+                '• All participating teams must email Wellington Clave ' +
+                '(wclave@areaa.org) by April 20, 2026 with: the full name of the ' +
+                'team, the name of the team lead (must be an AREAA member to be ' +
+                'considered), and the full company name including brand name.'
+            ),
+          ],
+        },
+        {
+          __component: 'shared.section',
+          body: [
+            p(
+              'The following brands will submit a list of all agents who met the ' +
+                'above minimums directly to RealTrends at no cost to the agent. ' +
+                'Those who are also AREAA members will be considered for the A-List:'
+            ),
+            p(
+              '• Berkshire Hathaway HomeServices\n• Better Homes & Gardens Real ' +
+                'Estate\n• Century 21\n• Coldwell Banker\n• Compass\n• Corcoran\n' +
+                "• Sotheby's International Realty\n• Douglas Elliman\n• Engel & " +
+                'Völkers\n• Exit Realty\n• eXp Realty\n• Intero\n• Keller Williams\n' +
+                '• NextHome\n• Redfin\n• RE/MAX\n• The Agency'
+            ),
+            p(
+              'Note: Realty Executives and LeadingRE agents and teams should use ' +
+                'the code provided by your corporate office in lieu of payment.'
+            ),
+          ],
+        },
+        {
+          __component: 'shared.section',
+          body: [
+            p(
+              'If your brand/company is NOT on the above list, you can still apply ' +
+                'at www.realtrends.com. The deadline for entry is April 20, 2026. ' +
+                'You will be responsible for the discounted $100 fee for your ' +
+                'submission. Please note that the promo code AREAA2026 is required ' +
+                'to apply the discount. Be prepared to submit third-party ' +
+                'verification via an MLS production report or a signed letter from ' +
+                'your broker attesting to your production.'
+            ),
+          ],
+        },
+        {
+          __component: 'shared.section',
+          title: 'View Previous A-List Winners',
+          body: [
+            p(
+              '• 2023 A-List Winners\n• 2022 A-List Winners\n• 2021 A-List ' +
+                'Winners\n• 2020 Top Originators Winners\n• 2020 Top Producers ' +
+                'Winners\n• 2019 Winners\n• 2018 Winners\n• 2017 Winners\n' +
+                '• 2016 Winners\n• 2015 Winners\n• 2014 Winners'
+            ),
+          ],
+        },
+        {
+          __component: 'shared.faq',
+          title: 'Frequently Asked Questions',
+          items: [
+            {
+              question: 'Why have we partnered with RealTrends Verified?',
+              answer: [
+                p(
+                  'RealTrends Verified is one of the leading organizations in our ' +
+                    'industry and annually produces definitive lists highlighting ' +
+                    'agent and team productivity. With support from Bank of America, ' +
+                    'RealTrends will power our list. We also benefit because ' +
+                    'RealTrends verifies all data submissions with submitting brands ' +
+                    'and/or brokers, accountants, etc.'
+                ),
+              ],
+            },
+            {
+              question: 'What is RealTrends Verified?',
+              answer: [
+                p(
+                  'RealTrends Verified produces the definitive third-party verified ' +
+                    'ranking for all elements of the residential real estate ' +
+                    'industry. Their annual rankings showcase exceptional ' +
+                    'performance by real estate brokerages, teams, and agents.'
+                ),
+              ],
+            },
+            {
+              question: 'When will the A-List be announced?',
+              answer: [p('Summer 2026.')],
+            },
+            {
+              question: 'When is the deadline for entry?',
+              answer: [p('April 20, 2026.')],
+            },
+            {
+              question: 'What if I moved from one company to another in 2025?',
+              answer: [
+                p(
+                  'If you moved to a brand that submits to RealTrends on your ' +
+                    'behalf, have your broker/owner reach out directly to your brand ' +
+                    'to ensure they sent your FULL 2025 production. You can also ' +
+                    'contact RealTrends at Rankings@RealTrends.com. If you are not ' +
+                    'with one of those brands, include all of your 2025 production ' +
+                    'when you visit www.realtrends.com/realtrends-submissions.'
+                ),
+              ],
+            },
+            {
+              question: 'What happens if I make the A-List?',
+              answer: [
+                p(
+                  'If you qualify, AREAA will reach out to you with further ' +
+                    'instructions.'
+                ),
+              ],
+            },
+            {
+              question: 'What are the benefits of being on the A-List?',
+              answer: [
+                p(
+                  "All named to the list will benefit from: an exclusive invitation " +
+                    "to AREAA's A-List Luncheon at the National Convention; an " +
+                    'unparalleled opportunity to meet other top producers; ' +
+                    "recognition on AREAA's A-List, including physical signage, a " +
+                    'personalized award, and digital recognition via our national ' +
+                    'media channels and website; and a distinction that indicates ' +
+                    'you are a leader who supports sustainable homeownership for the ' +
+                    'AANHPI community.'
+                ),
+              ],
+            },
+            {
+              question:
+                'Do I have to be Asian American or Pacific Islander to apply?',
+              answer: [
+                p(
+                  "No — we invite anyone supportive of AREAA's mission (to advance " +
+                    'sustainable homeownership for Asian Americans and Pacific ' +
+                    'Islanders) to apply.'
+                ),
+              ],
+            },
+            {
+              question: 'Do I have to be a member to apply?',
+              answer: [
+                p(
+                  'Yes. You can join at areaa.org/membership-registration. It is ' +
+                    'your sole responsibility to ensure your membership is current.'
+                ),
+              ],
+            },
+            {
+              question: 'Do we have a program for mortgage professionals?',
+              answer: [
+                p(
+                  'Yes. We take member submissions highlighting production. Last ' +
+                    'year AREAA honored nearly 40 members.'
+                ),
+              ],
+            },
+            {
+              question: 'Questions?',
+              answer: [
+                p(
+                  'Email wclave@areaa.org. If you have questions about payment or ' +
+                    'your entry, please contact RealTrends at Rankings@RealTrends.com.'
+                ),
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    ...pub,
+  });
+
   // --- global About page ---------------------------------------------------
   await docs('api::page.page').create({
     data: {

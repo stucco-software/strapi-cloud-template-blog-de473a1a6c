@@ -747,6 +747,7 @@ export interface ApiPagePage extends Struct.CollectionTypeSchema {
         'shared.video-embed',
         'shared.gallery',
         'shared.contact-form',
+        'shared.faq',
       ]
     >;
     createdAt: Schema.Attribute.DateTime;
