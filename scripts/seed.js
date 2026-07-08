@@ -22,6 +22,17 @@ const PLACEHOLDER_PNG =
 
 // Rich-text (blocks) paragraph helper.
 const p = (text) => ({ type: 'paragraph', children: [{ type: 'text', text }] });
+// Rich-text (blocks) unordered-list helper — one <li> per string. Produces a
+// real `list` block (renders as <ul> via the frontend RichText component)
+// instead of a paragraph of manual "• …\n• …" bullets.
+const ul = (items) => ({
+  type: 'list',
+  format: 'unordered',
+  children: items.map((text) => ({
+    type: 'list-item',
+    children: [{ type: 'text', text }],
+  })),
+});
 // CTA component helper.
 const cta = (label, href, style) => ({ label, href, style });
 
@@ -565,9 +576,10 @@ async function main() {
   });
 
   // --- Programs: A-List (served flat at /a-list via the catch-all) ----------
-  // Exercises the new shared.link-list (winners archive) + shared.faq (accordion)
-  // dynamic-zone components. Content transcribed from the live areaa.org A-List
-  // page; "View 20XX A-List"/winner links are placeholders (#) pending real URLs.
+  // Exercises shared.section (with real `list` blocks — winners archive,
+  // eligibility, brands) + shared.faq (accordion) dynamic-zone components.
+  // Content transcribed from the live areaa.org A-List page; "View 20XX A-List"/
+  // winner links are placeholders (#) pending real URLs.
   await docs('api::page.page').create({
     data: {
       title: "AREAA's A-List",
@@ -598,17 +610,17 @@ async function main() {
                 "America's Best Real Estate Professionals and The Thousand — will " +
                 "also be considered for AREAA's A-List."
             ),
-            p(
-              '• An individual must have closed at least 25 sides OR $10 million ' +
-                'in sales volume in 2025.\n' +
-                '• A team must have closed at least 40 sides OR $16 million in ' +
-                'sales volume in 2025.\n' +
-                '• The team lead must be an AREAA member.\n' +
-                '• All participating teams must email Wellington Clave ' +
+            ul([
+              'An individual must have closed at least 25 sides OR $10 million ' +
+                'in sales volume in 2025.',
+              'A team must have closed at least 40 sides OR $16 million in ' +
+                'sales volume in 2025.',
+              'The team lead must be an AREAA member.',
+              'All participating teams must email Wellington Clave ' +
                 '(wclave@areaa.org) by April 20, 2026 with: the full name of the ' +
                 'team, the name of the team lead (must be an AREAA member to be ' +
-                'considered), and the full company name including brand name.'
-            ),
+                'considered), and the full company name including brand name.',
+            ]),
           ],
         },
         {
@@ -619,13 +631,25 @@ async function main() {
                 'above minimums directly to RealTrends at no cost to the agent. ' +
                 'Those who are also AREAA members will be considered for the A-List:'
             ),
-            p(
-              '• Berkshire Hathaway HomeServices\n• Better Homes & Gardens Real ' +
-                'Estate\n• Century 21\n• Coldwell Banker\n• Compass\n• Corcoran\n' +
-                "• Sotheby's International Realty\n• Douglas Elliman\n• Engel & " +
-                'Völkers\n• Exit Realty\n• eXp Realty\n• Intero\n• Keller Williams\n' +
-                '• NextHome\n• Redfin\n• RE/MAX\n• The Agency'
-            ),
+            ul([
+              'Berkshire Hathaway HomeServices',
+              'Better Homes & Gardens Real Estate',
+              'Century 21',
+              'Coldwell Banker',
+              'Compass',
+              'Corcoran',
+              "Sotheby's International Realty",
+              'Douglas Elliman',
+              'Engel & Völkers',
+              'Exit Realty',
+              'eXp Realty',
+              'Intero',
+              'Keller Williams',
+              'NextHome',
+              'Redfin',
+              'RE/MAX',
+              'The Agency',
+            ]),
             p(
               'Note: Realty Executives and LeadingRE agents and teams should use ' +
                 'the code provided by your corporate office in lieu of payment.'
@@ -650,12 +674,19 @@ async function main() {
           __component: 'shared.section',
           title: 'View Previous A-List Winners',
           body: [
-            p(
-              '• 2023 A-List Winners\n• 2022 A-List Winners\n• 2021 A-List ' +
-                'Winners\n• 2020 Top Originators Winners\n• 2020 Top Producers ' +
-                'Winners\n• 2019 Winners\n• 2018 Winners\n• 2017 Winners\n' +
-                '• 2016 Winners\n• 2015 Winners\n• 2014 Winners'
-            ),
+            ul([
+              '2023 A-List Winners',
+              '2022 A-List Winners',
+              '2021 A-List Winners',
+              '2020 Top Originators Winners',
+              '2020 Top Producers Winners',
+              '2019 Winners',
+              '2018 Winners',
+              '2017 Winners',
+              '2016 Winners',
+              '2015 Winners',
+              '2014 Winners',
+            ]),
           ],
         },
         {
