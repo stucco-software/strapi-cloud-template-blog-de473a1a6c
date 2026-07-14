@@ -106,6 +106,37 @@
       "relation": "manyToMany",
       "target": "api::chapter.chapter",
       "mappedBy": "administrators"
+    },
+    "memberSince": {
+      "type": "date"
+    },
+    "autoRenew": {
+      "type": "boolean",
+      "default": false
+    },
+    "location": {
+      "type": "string"
+    },
+    "company": {
+      "type": "string"
+    },
+    "phone": {
+      "type": "string"
+    },
+    "postalCode": {
+      "type": "string"
+    },
+    "languages": {
+      "type": "string"
+    },
+    "designations": {
+      "type": "string"
+    },
+    "x": {
+      "type": "string"
+    },
+    "instagram": {
+      "type": "string"
     }
   }
 }

@@ -1336,14 +1336,17 @@ export interface PluginUsersPermissionsUser
       'manyToMany',
       'api::chapter.chapter'
     >;
+    autoRenew: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     bio: Schema.Attribute.Text;
     blocked: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     chapter: Schema.Attribute.Relation<'manyToOne', 'api::chapter.chapter'>;
+    company: Schema.Attribute.String;
     confirmationToken: Schema.Attribute.String & Schema.Attribute.Private;
     confirmed: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    designations: Schema.Attribute.String;
     displayName: Schema.Attribute.String;
     duesPaidThrough: Schema.Attribute.Date;
     email: Schema.Attribute.Email &
@@ -1353,6 +1356,8 @@ export interface PluginUsersPermissionsUser
       }>;
     firstName: Schema.Attribute.String & Schema.Attribute.Required;
     image: Schema.Attribute.Media<'images'>;
+    instagram: Schema.Attribute.String;
+    languages: Schema.Attribute.String;
     lastName: Schema.Attribute.String & Schema.Attribute.Required;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<
@@ -1360,11 +1365,15 @@ export interface PluginUsersPermissionsUser
       'plugin::users-permissions.user'
     > &
       Schema.Attribute.Private;
+    location: Schema.Attribute.String;
+    memberSince: Schema.Attribute.Date;
     password: Schema.Attribute.Password &
       Schema.Attribute.Private &
       Schema.Attribute.SetMinMaxLength<{
         minLength: 6;
       }>;
+    phone: Schema.Attribute.String;
+    postalCode: Schema.Attribute.String;
     provider: Schema.Attribute.String;
     publishedAt: Schema.Attribute.DateTime;
     resetPasswordToken: Schema.Attribute.String & Schema.Attribute.Private;
@@ -1386,6 +1395,7 @@ export interface PluginUsersPermissionsUser
       Schema.Attribute.SetMinMaxLength<{
         minLength: 3;
       }>;
+    x: Schema.Attribute.String;
   };
 }
 
