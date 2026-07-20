@@ -1,0 +1,21 @@
+node_modules
+build
+dist
+.cache
+.tmp
+.git
+.github
+.strapi
+.vscode
+.idea
+.DS_Store
+npm-debug.log*
+
+# Local SQLite data must never ship in the image
+.tmp/data.db
+*.db
+
+# Never bake secrets into the image
+.env
+.env.*
+*.pem
