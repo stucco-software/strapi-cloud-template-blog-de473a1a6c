@@ -1,0 +1,89 @@
+# Dev deploy — build the Strapi image and roll the ECS service with zero downtime.
+#
+# Flow: push to `main` → build linux/arm64 image → push to ECR (:latest + :sha)
+#       → `ecs update-service --force-new-deployment` → wait until stable.
+#
+# The ECS task definition points at the `:latest` tag, and the service runs
+# minHealthyPercent 100 / maxHealthyPercent 200 (see areaa-infra ComputeStack),
+# so the new task is healthy before the old one drains — no downtime. Strapi runs
+# any pending database migrations automatically on boot (`strapi start`).
+#
+# Auth: GitHub OIDC → the least-privilege role from areaa-infra CicdStack
+# (`areaa-dev-gha-strapi`); no long-lived AWS keys in GitHub.
+#
+# PROD (later): copy to deploy-prod.yml, flip the env block to the prod
+# cluster/service/role, and gate on the prod branch/environment. Prod adds
+# blue/green (CodeDeploy) — a TODO, not needed now.
+
+name: deploy-dev
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-dev-strapi
+  cancel-in-progress: false
+
+permissions:
+  id-token: write   # request the OIDC token
+  contents: read
+
+env:
+  AWS_REGION: us-west-2
+  ACCOUNT_ID: "873445271731"
+  ECR_REPO: areaa-dev-strapi
+  ECS_CLUSTER: areaa-dev
+  ECS_SERVICE: areaa-dev-strapi
+  DEPLOY_ROLE_ARN: arn:aws:iam::873445271731:role/areaa-dev-gha-strapi
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Fargate tasks are pinned to linux/arm64 (Graviton). ubuntu-latest is
+      # x86, so we cross-build with QEMU. The Strapi build (sharp/vips native
+      # compile + admin build) is heavy under emulation — the gha cache below
+      # keeps re-runs fast. For faster native builds, switch `runs-on` to
+      # `ubuntu-24.04-arm` (if your plan includes arm64 runners) + drop QEMU.
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build & push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64
+          provenance: false
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO }}:latest
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Roll ECS service (zero-downtime)
+        run: |
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --force-new-deployment >/dev/null
+          echo "Waiting for the service to reach a steady state…"
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE"
+          echo "Deployed ${{ github.sha }} to $ECS_SERVICE."
