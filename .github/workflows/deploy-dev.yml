@@ -39,7 +39,7 @@ env:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
 
@@ -53,14 +53,10 @@ jobs:
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # Fargate tasks are pinned to linux/arm64 (Graviton). ubuntu-latest is
-      # x86, so we cross-build with QEMU. The Strapi build (sharp/vips native
-      # compile + admin build) is heavy under emulation — the gha cache below
-      # keeps re-runs fast. For faster native builds, switch `runs-on` to
-      # `ubuntu-24.04-arm` (if your plan includes arm64 runners) + drop QEMU.
-      - uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
+      # Fargate is arm64 (Graviton); build natively on an arm64 hosted runner
+      # (Team plan) — no QEMU. Emulation previously SIGILL-crashed `npm ci`
+      # (exit 132); the sharp/vips native compile + admin build is far faster
+      # native anyway. The gha cache below keeps re-runs quick.
       - uses: docker/setup-buildx-action@v3
 
       - name: Build & push image
