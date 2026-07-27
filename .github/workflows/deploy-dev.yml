@@ -17,8 +17,12 @@
 
 name: deploy-dev
 on:
+  # Skip the image build + ECS roll when a push only touches docs/markdown.
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   workflow_dispatch:
 
 concurrency:
