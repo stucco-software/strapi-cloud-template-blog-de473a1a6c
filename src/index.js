@@ -5,9 +5,11 @@
 // manual admin toggle (and so it survives fresh DBs / new environments).
 //   - user.updateMe       → PUT /api/users/me            (edit own profile)
 //   - auth.changePassword → POST /api/auth/change-password
+//   - user.directory      → GET /api/users/directory     (privacy-safe member list)
 const AUTHENTICATED_GRANTS = [
   'plugin::users-permissions.user.updateMe',
   'plugin::users-permissions.auth.changePassword',
+  'plugin::users-permissions.user.directory',
 ];
 
 module.exports = {
