@@ -11,6 +11,9 @@
 
 module.exports = {
   routes: [
-    { method: 'GET', path: '/chapter-admin/whoami', handler: 'chapter-admin.whoami' },
+    { method: 'GET',    path: '/chapter-admin/events',              handler: 'chapter-admin.listEvents' },
+    { method: 'POST',   path: '/chapter-admin/events',              handler: 'chapter-admin.createEvent' },
+    { method: 'PUT',    path: '/chapter-admin/events/:documentId',  handler: 'chapter-admin.updateEvent' },
+    { method: 'DELETE', path: '/chapter-admin/events/:documentId',  handler: 'chapter-admin.deleteEvent' },
   ],
 };

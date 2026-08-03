@@ -1,22 +1,35 @@
 'use strict';
 
-/**
- * chapter-admin controller.
- *
- * This API deliberately has no content-type. Strapi loads routes, controllers
- * and services independently of content-types (@strapi/core loaders/apis.js),
- * and users-permissions builds its action list from CONTROLLERS as
- * `api::<api>.<controller>.<action>`. So every method named here becomes a
- * togglable permission on the Chapter Admin role.
- *
- * Handlers are assembled from services/ — nothing but wiring belongs here.
- */
+const { chapterScopedResource } = require('../services/resource-factory');
+// ScopeError must be obtained by direct require, never via strapi.service(...).
+// Strapi's loadFiles deletes the require cache per file, so a service-registry
+// lookup can hand back a DIFFERENT class object and `instanceof` silently fails.
+const { ScopeError } = require('../services/scope');
+
+// Mirrors api::event.event minus `chapter` and `slug`, both set at create and
+// immutable after.
+const events = chapterScopedResource({
+  uid: 'api::event.event',
+  hasSlug: true,
+  editableFields: [
+    'title', 'startsAt', 'endsAt', 'description',
+    'memberPrice', 'publicPrice', 'location', 'locationUrl', 'figure',
+  ],
+});
+
+/** Turn a ScopeError into a 403; let everything else surface. */
+const guarded = (handler) => async (ctx) => {
+  try {
+    return await handler(ctx);
+  } catch (err) {
+    if (err instanceof ScopeError) return ctx.forbidden(err.message);
+    throw err;
+  }
+};
 
 module.exports = {
-  // Temporary canary, replaced in Task 11. Not granted to any role, so it 403s;
-  // its only job is to prove the action appears in the permission matrix.
-  async whoami(ctx) {
-    if (!ctx.state.user) return ctx.unauthorized();
-    ctx.body = { ok: true, userId: ctx.state.user.id };
-  },
+  listEvents: guarded(events.list),
+  createEvent: guarded(events.create),
+  updateEvent: guarded(events.update),
+  deleteEvent: guarded(events.delete),
 };
