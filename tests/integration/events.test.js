@@ -58,6 +58,9 @@ describe('POST /api/chapter-admin/events', () => {
     const res = await auth(api().post('/api/chapter-admin/events'))
       .send({ title: title('Trespass'), chapterSlug: chapterB.slug });
     expect(res.status).toBe(403);
+    // On the scope check specifically — not 403 for an incidental reason such
+    // as a missing chapter or an unresolvable slug.
+    expect(res.body.error?.message ?? '').toMatch(/not administered/i);
   });
 
   it('400s on an unslugifiable title rather than 500ing', async () => {
