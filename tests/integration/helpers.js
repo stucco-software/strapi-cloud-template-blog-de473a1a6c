@@ -8,9 +8,15 @@ const require = createRequire(import.meta.url);
 const { createStrapi, compileStrapi } = require('@strapi/strapi');
 
 let instance;
+let pristineListeners;
 
 export async function boot() {
   if (!instance) {
+    // Snapshot the process listeners BEFORE Strapi installs its signal traps,
+    // so this set is Vitest's own and nothing else. shutdown() restores exactly
+    // this — see the comment there.
+    pristineListeners = process.eventNames().map((name) => [name, process.listeners(name)]);
+
     instance = await createStrapi(await compileStrapi()).load();
     instance.log.level = 'error';
     await instance.server.mount(); // load() never mounts; only listen() does
@@ -19,7 +25,30 @@ export async function boot() {
 }
 
 export async function shutdown() {
-  if (instance) { await instance.destroy(); instance = null; }
+  if (!instance) return;
+
+  // strapi.destroy() calls process.removeAllListeners() with NO arguments
+  // (@strapi/core/dist/Strapi.js:419), which strips Vitest's own IPC handlers
+  // along with Strapi's signal traps. Left unrestored, the pool worker's next
+  // send() rejects with ERR_IPC_CHANNEL_CLOSED and the run exits 1 even though
+  // every test passed — a red suite that means nothing.
+  //
+  // Restore the PRE-BOOT snapshot, not a snapshot taken here. Taking it here
+  // would also reinstate Strapi's own SIGTERM/SIGINT trap, which then fires at
+  // process exit and calls destroy() a second time:
+  // "Destroy for plugin::content-manager has already been called".
+  try {
+    await instance.destroy();
+  } finally {
+    instance = null;
+    for (const [name, listeners] of pristineListeners ?? []) {
+      const current = process.listeners(name);
+      for (const listener of listeners) {
+        if (!current.includes(listener)) process.on(name, listener);
+      }
+    }
+    pristineListeners = null;
+  }
 }
 
 /**
