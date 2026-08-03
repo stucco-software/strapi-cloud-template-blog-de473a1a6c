@@ -11,6 +11,9 @@
     "develop": "strapi develop",
     "start": "strapi start",
     "strapi": "strapi",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
     "push": "strapi transfer --to https://dedicated-gift-40d6e8dfb6.strapiapp.com/admin --to-token fa9d93d2b80dea652c27910d6e871cbc2a5dc03066cc2cae7a53a27d6fc4a8df4a5a65ca6a121a80a5074ea6d6fb2347be95d7badd41388ff4951dfe562cc3c3fa8770c0d48c56aeeb0b7c20c6ddcfd5a24753c824c577f6fba46c81d35588117a91ff3f969f607b32a2b127bdb9c0c3fc3227838ef8b4edd173494553cde199",
     "upgrade": "npx @strapi/upgrade latest",
     "upgrade:dry": "npx @strapi/upgrade latest --dry"
@@ -34,5 +37,9 @@
   "strapi": {
     "uuid": "cced10fa-5b18-4ae0-bba9-512ec9748525",
     "installId": "3be7e823d7acf94c08b078437708a3d3ee9b0b6796b8168ba35eaff6d81f027b"
+  },
+  "devDependencies": {
+    "supertest": "^7.2.2",
+    "vitest": "^3.2.7"
   }
 }
