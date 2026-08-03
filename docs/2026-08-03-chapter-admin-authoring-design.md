@@ -29,7 +29,8 @@ plus an `administeredChapters` relation."*
   shaped so one could be added later without reworking the UI.
 - **CA5** — The chapter microsite page is a **fixed template** — the reserved
   `slug: 'home'` page. Admins fill defined slots; they cannot add, remove, or reorder
-  dynamic-zone components. Event and member grids populate automatically.
+  dynamic-zone components. Every slot is explicitly set, including the event and member
+  grids: the renderer reads stored relations, not live queries.
 - **CA6** — Member management is limited to **committee assignment** in v1. The
   capability model must accommodate growth to full member admin (status, dues,
   approvals) without rearchitecting scope enforcement.
@@ -42,7 +43,7 @@ plus an `administeredChapters` relation."*
 - **CA10** — Concurrent edits are **last-write-wins**, accepted knowingly. Chapters
   have few admins; optimistic concurrency is deferred.
 - **CA11** — Every chapter-admin write to a draft-and-publish type **publishes
-  explicitly**. Six of the seven write targets have `draftAndPublish: true`, and the
+  explicitly**. Five of the six write targets have `draftAndPublish: true`, and the
   Strapi 5 documents API writes drafts by default, so a save without
   `status: 'published'` is invisible on the live site. `form-submission` is
   `draftAndPublish: false` and must not receive the flag.
@@ -66,9 +67,8 @@ sit on four committees.
 
 What the unidirectional relation actually costs is the inverse: there is no
 `user.committees`, so "which committees is this member on" cannot be populated from the
-user side. Nothing in v1 needs that, so migrating a live relation — 8 committees,
-including the national Delegate and Executive Boards that `/about/*` renders from — is
-deferred until a screen requires it.
+user side. Nothing in v1 needs that, so migrating a live relation with existing
+membership rows is deferred until a screen actually requires it.
 
 `event.slug` / `news-item.slug` likewise stay `uid` — see Slugs below.
 
@@ -173,11 +173,15 @@ helper, never the enforcement point.
 
 ## Draft & Publish
 
-Six of the seven types this design writes to have `draftAndPublish: true`:
+This design writes to six types. Five have `draftAndPublish: true`:
 
-| | event | news-item | page | chapter | committee | partner | form-submission |
-|---|---|---|---|---|---|---|---|
-| `draftAndPublish` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| | event | news-item | page | chapter | committee | form-submission |
+|---|---|---|---|---|---|---|
+| `draftAndPublish` | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+
+`partner` is absent deliberately: `PUT /partners` attaches and detaches by writing
+`chapter.partners`, which is a write to `chapter` (CA7). Partner records are never
+written by this design.
 
 In Strapi 5, `documents().create()` and `documents().update()` operate on the **draft**
 unless given `status: 'published'`. The frontend reads published content by default
@@ -284,7 +288,7 @@ is an editable slot.
 | # | Component | Admin-editable |
 |---|---|---|
 | 1 | `shared.hero` | title, body, figure, primaryCta, secondaryCta |
-| 2 | `shared.upcoming-events` | title, link only — events auto-populate |
+| 2 | `shared.upcoming-events` | title, link, event picker (chapter events only) |
 | 3 | `shared.social-media-feed` | title, platform, feedUrl |
 | 4 | `shared.video-embed` | title, videoUrl, caption |
 | 5 | `shared.gallery` | title, photos |
@@ -292,6 +296,20 @@ is an editable slot.
 | 7 | `shared.contact-form` | title, intro — `fields` are national-configured |
 | 8–10 | `shared.member-group` ×3 | title, link, member picker (chapter members only) |
 | 11 | `shared.partner-group` | title; partners via `/partners` (CA7) |
+
+**Every grid is a picker, not a live query.** `shared.upcoming-events`,
+`shared.member-group`, and `shared.partner-group` all render from relations stored *on
+the component*: `lib/content.ts` populates `events`, `members`, and `partners` at
+page-fetch time, and `PageBody.astro` hands each component straight to its renderer.
+Nothing queries the chapter's records at render time — the seeded chapter pages point
+their `upcoming-events` slot at **national** events (`scripts/seed.js:901`). So these
+slots need explicit writers, and each gets the multi-select picker scoped to the
+chapter's own events and members.
+
+Filling them server-side on save was considered and rejected: a stored relation written
+once decays, so a page would go on advertising an event the day after it happened until
+someone saved again. Genuinely automatic grids would mean the renderer querying live,
+which changes `lib/content.ts` for national pages too — out of scope here.
 
 **Dynamic zones are replace-on-write** — Strapi does not patch a dynamic zone; writing
 it replaces the whole array. `PUT /page` must therefore rebuild the entire array, which
@@ -351,9 +369,10 @@ This design needs four additions:
 | `checkbox` | `submission.handled` |
 | `file` | media upload |
 
-Plus one new component — a **multi-select picker** (committee members, partner
-attach/detach, `member-group` slots) — which is not a `FormField` variant and should be
-its own component with its own tests.
+Plus one new component — a **multi-select picker**, used in five places: committee
+members, partner attach/detach, the three `member-group` slots, and the
+`upcoming-events` slot. It is not a `FormField` variant; it is its own component with
+its own tests, and it carries more of this design's UI surface than anything else.
 
 The windowed `pageItems()` helper in `account/members.astro` moves to `lib/` rather
 than being copied into the events and news list screens.
@@ -459,7 +478,8 @@ supertest. Only a thin set of route-level integration tests pays that cost.
 - field whitelist — a payload carrying `role`, `status`, `chapter` writes none of them
 - slug generation and collision suffixing
 - `blocksToDoc` / `docToBlocks` round-trip against real payloads
-- `/page` reconstruction — unknown components survive a template write
+- `/page` positional merge — unknown components and national's ordering both survive a
+  template write
 
 ---
 
