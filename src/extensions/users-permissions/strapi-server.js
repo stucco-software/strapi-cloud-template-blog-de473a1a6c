@@ -65,9 +65,30 @@ module.exports = (plugin) => {
     });
   };
 
+  // Fields marked `private` in the user schema so that anonymous GET /api/users
+  // cannot leak them, but which a member is entitled to see about THEMSELVES.
+  // The account area reads every one of these: MemberMeta renders memberSince /
+  // autoRenew / duesPaidThrough, the profile page renders the status badge, and
+  // the profile form edits phone and postalCode.
+  //
+  // `private` is absolute in Strapi — the sanitizer strips these for every
+  // caller including the owner — so `me` re-attaches them explicitly. This is
+  // the same technique the `chapter` re-attach below already uses, for the same
+  // reason: sanitize first, then put back exactly what this caller may have.
+  const SELF_VISIBLE_PRIVATE_FIELDS = [
+    'email',
+    'status',
+    'memberSince',
+    'duesPaidThrough',
+    'autoRenew',
+    'phone',
+    'postalCode',
+  ];
+
   // Fetch the signed-in user with chapter populated, sanitize, and re-attach a
   // minimal chapter view (the sanitizer drops it because the Authenticated role
-  // has no chapter read-grant). Shared by `me` and `updateMe`.
+  // has no chapter read-grant) plus the member's own private fields. Shared by
+  // `me` and `updateMe`.
   const readSelf = async (ctx) => {
     const user = await strapi
       .documents('plugin::users-permissions.user')
@@ -79,6 +100,9 @@ module.exports = (plugin) => {
     const body = await sanitizeOutput(user, ctx);
     if (user?.chapter) {
       body.chapter = { name: user.chapter.name, slug: user.chapter.slug };
+    }
+    for (const field of SELF_VISIBLE_PRIVATE_FIELDS) {
+      if (user && field in user) body[field] = user[field];
     }
     return body;
   };

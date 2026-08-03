@@ -23,7 +23,8 @@
       "type": "email",
       "minLength": 6,
       "configurable": false,
-      "required": true
+      "required": true,
+      "private": true
     },
     "provider": {
       "type": "string",
@@ -87,10 +88,12 @@
     "status": {
       "type": "enumeration",
       "enum": ["Active", "Lapsed", "Pending", "Honorary"],
-      "default": "Pending"
+      "default": "Pending",
+      "private": true
     },
     "duesPaidThrough": {
-      "type": "date"
+      "type": "date",
+      "private": true
     },
     "title": {
       "type": "string"
@@ -108,11 +111,13 @@
       "mappedBy": "administrators"
     },
     "memberSince": {
-      "type": "date"
+      "type": "date",
+      "private": true
     },
     "autoRenew": {
       "type": "boolean",
-      "default": false
+      "default": false,
+      "private": true
     },
     "location": {
       "type": "string"
@@ -121,10 +126,12 @@
       "type": "string"
     },
     "phone": {
-      "type": "string"
+      "type": "string",
+      "private": true
     },
     "postalCode": {
-      "type": "string"
+      "type": "string",
+      "private": true
     },
     "languages": {
       "type": "string"
