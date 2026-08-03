@@ -248,7 +248,7 @@ All under `/api/chapter-admin/*`, all requiring the `Chapter Admin` role.
 | `/committees` | GET POST PUT DELETE | `committee.chapter` | Factory; member picker restricted to chapter members |
 | `/page` | GET PUT | `page.chapter` | Fixed template, upsert — see below |
 | `/chapter` | GET PUT | the record itself | `name`, `email` only |
-| `/members` | GET | `user.chapter` | Directory-shaped rows, for the committee picker |
+| `/members` | GET | `user.chapter` | Directory-shaped rows, for the committee and `member-group` pickers |
 | `/partners` | GET PUT | via `chapter.partners` | GET lists the global catalogue; PUT attaches/detaches |
 | `/submissions` | GET PUT | `formSubmission.chapter` | Read + mark `handled` |
 | `/media` | POST | n/a | Validated upload — see below |
@@ -369,10 +369,10 @@ This design needs four additions:
 | `checkbox` | `submission.handled` |
 | `file` | media upload |
 
-Plus one new component — a **multi-select picker**, used in five places: committee
-members, partner attach/detach, the three `member-group` slots, and the
-`upcoming-events` slot. It is not a `FormField` variant; it is its own component with
-its own tests, and it carries more of this design's UI surface than anything else.
+Plus one new component — a **multi-select picker**, with four distinct uses across six
+instances: committee members, partner attach/detach, the three `member-group` slots,
+and the `upcoming-events` slot. It is not a `FormField` variant; it is its own component
+with its own tests, and it carries more of this design's UI surface than anything else.
 
 The windowed `pageItems()` helper in `account/members.astro` moves to `lib/` rather
 than being copied into the events and news list screens.
