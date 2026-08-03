@@ -41,9 +41,11 @@ plus an `administeredChapters` relation."*
   `plugin::upload` permission is never granted to the Chapter Admin role.
 - **CA10** — Concurrent edits are **last-write-wins**, accepted knowingly. Chapters
   have few admins; optimistic concurrency is deferred.
-- **CA11** — Every chapter-admin write **publishes explicitly**. All six content types
-  have `draftAndPublish: true`, and the Strapi 5 documents API writes drafts by
-  default, so a save without `status: 'published'` is invisible on the live site.
+- **CA11** — Every chapter-admin write to a draft-and-publish type **publishes
+  explicitly**. Six of the seven write targets have `draftAndPublish: true`, and the
+  Strapi 5 documents API writes drafts by default, so a save without
+  `status: 'published'` is invisible on the live site. `form-submission` is
+  `draftAndPublish: false` and must not receive the flag.
 - **CA12** — `DELETE` is a real delete, not an archive flag. Chapter admins remove
   their own mistakes; national retains the admin panel for recovery.
 
@@ -51,24 +53,24 @@ plus an `administeredChapters` relation."*
 
 ## Schema changes required
 
-Two changes must land before the features that depend on them.
+**None.** Every feature in this design works against the schema as it stands.
 
-**`committee.members` — `oneToMany` → `manyToMany`.** The ontology table specifies
-manyToMany, but the implemented schema is:
+One relation is worth understanding but not changing. `committee.members` is
+`oneToMany` and unidirectional, where the ontology table records `manyToMany`. Despite
+the cardinality name this does **not** limit a member to one committee: Strapi 5
+implements it as a join table (`committees_members_lnk`, composite-unique on
+`committee_id, user_id`), and the "drop previous relations" cleanup in
+`@strapi/database` is gated on the relation being *bidirectional*, which this one is
+not. Multi-committee membership works today — users 38 and 39 in the seeded data each
+sit on four committees.
 
-```json
-"members": { "type": "relation", "relation": "oneToMany",
-             "target": "plugin::users-permissions.user" }
-```
+What the unidirectional relation actually costs is the inverse: there is no
+`user.committees`, so "which committees is this member on" cannot be populated from the
+user side. Nothing in v1 needs that, so migrating a live relation — 8 committees,
+including the national Delegate and Executive Boards that `/about/*` renders from — is
+deferred until a screen requires it.
 
-`oneToMany` puts the foreign key on the *user*, so a member can belong to exactly one
-committee, and assigning them to a second **silently removes them from the first**.
-Committee assignment is the entire v1 member-management feature (CA6), so this relation
-cannot express the feature as designed. Change to `manyToMany` with an inverse
-`committees` on the user schema, which does not currently exist.
-
-**No other schema change is required.** In particular, `event.slug` / `news-item.slug`
-stay `uid` — see Slugs below.
+`event.slug` / `news-item.slug` likewise stay `uid` — see Slugs below.
 
 ---
 
@@ -87,7 +89,7 @@ admin UI, with scope-enforcement code untouched.
 ### Where the code lives
 
 A dedicated `src/api/chapter-admin/` API — controllers, routes, services — **not** an
-addition to the users-permissions extension. The routes span six content types, so
+addition to the users-permissions extension. The routes span eight content types, so
 they do not belong under a user-centric extension, and a first-class API yields
 conventional grant strings:
 
@@ -160,20 +162,22 @@ chapterScopedResource({
 // → { list, create, update, delete }
 ```
 
-The other five routes (`/page`, `/chapter`, `/members`, `/partners`, `/submissions`)
-are bespoke handlers — each is a partial verb set with resource-specific rules — but
-they all call the same shared `assertChapterScope(ctx, chapterId)` helper. The factory
-is a convenience over that helper, not the enforcement point.
+Five more (`/page`, `/chapter`, `/members`, `/partners`, `/submissions`) are bespoke
+handlers — each a partial verb set with resource-specific rules — but they all call the
+same shared `assertChapterScope(ctx, chapterId)` helper. `/media` is the ninth route
+and not a resource at all: it is gated by role only, since an upload has no owning
+chapter until a record references it. The factory is a convenience over the shared
+helper, never the enforcement point.
 
 ---
 
 ## Draft & Publish
 
-All six content types have `draftAndPublish: true`:
+Six of the seven types this design writes to have `draftAndPublish: true`:
 
-| | event | news-item | page | chapter | committee | partner |
-|---|---|---|---|---|---|---|
-| `draftAndPublish` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| | event | news-item | page | chapter | committee | partner | form-submission |
+|---|---|---|---|---|---|---|---|
+| `draftAndPublish` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
 
 In Strapi 5, `documents().create()` and `documents().update()` operate on the **draft**
 unless given `status: 'published'`. The frontend reads published content by default
@@ -182,9 +186,16 @@ without an explicit publish is written successfully and is invisible on the live
 with no error anywhere — exactly the silent-failure class this design is trying to
 avoid.
 
-Per CA4/CA11, every write passes `status: 'published'`, which writes the draft and
-publishes in one call. This is also the seam where a future review gate lands: dropping
-the flag turns the same endpoints into draft-only submission with no UI rework.
+Per CA4/CA11, every write to these types passes `status: 'published'`, which writes the
+draft and publishes in one call. `form-submission` (`draftAndPublish: false`) is the
+exception and takes no flag. This is also the seam where a future review gate lands:
+dropping the flag turns the same endpoints into draft-only submission with no UI rework.
+
+One consequence to accept: **Strapi publishes the document, not the delta.** If national
+has an in-progress unpublished revision of a chapter's home page, a chapter admin's save
+publishes that revision along with their own change. This is distinct from CA10's
+last-write-wins — nothing is lost, but something unintended may go live. Acceptable at
+current volumes; revisit if national begins staging chapter-page revisions.
 
 This does not disturb Live Preview. `config/admin.js` and the frontend's
 `resolveStatus()` continue to gate draft reads behind `PREVIEW_SECRET` for national
@@ -263,30 +274,40 @@ on both fields — a chapter may accumulate other pages later.
 **Upsert, not update.** If a chapter has no `home` page — a newly created chapter, or
 one national has not set up — `PUT` creates it from the template rather than 404ing, so
 a chapter admin can bootstrap their own microsite. This is why the route is GET+PUT
-with no separate POST.
+with no separate POST. `page.title` and `page.slug` are both `required: true`, so the
+create path supplies `slug: 'home'` and defaults the title to the chapter name; neither
+is an editable slot.
 
-**The slots**, derived from the seeded chapter home page:
+**The slots**, in the order the seeded chapter home page defines them
+(`scripts/seed.js:884`–`:965`) — eleven component instances across nine types:
 
-| Component | Instances | Admin-editable |
+| # | Component | Admin-editable |
 |---|---|---|
-| `shared.hero` | 1 | title, body, figure, primaryCta, secondaryCta |
-| `shared.section` | 1 | title, body, figure, primaryCta, secondaryCta |
-| `shared.upcoming-events` | 1 | title, link only — events auto-populate |
-| `shared.member-group` | 3 | title, link, member picker (chapter members only) |
-| `shared.partner-group` | 1 | title; partners via `/partners` (CA7) |
-| `shared.gallery` | 1 | title, photos |
-| `shared.video-embed` | 1 | title, videoUrl, caption |
-| `shared.social-media-feed` | 1 | title, platform, feedUrl |
-| `shared.contact-form` | 1 | title, intro — `fields` are national-configured |
+| 1 | `shared.hero` | title, body, figure, primaryCta, secondaryCta |
+| 2 | `shared.upcoming-events` | title, link only — events auto-populate |
+| 3 | `shared.social-media-feed` | title, platform, feedUrl |
+| 4 | `shared.video-embed` | title, videoUrl, caption |
+| 5 | `shared.gallery` | title, photos |
+| 6 | `shared.section` | title, body, figure, primaryCta, secondaryCta |
+| 7 | `shared.contact-form` | title, intro — `fields` are national-configured |
+| 8–10 | `shared.member-group` ×3 | title, link, member picker (chapter members only) |
+| 11 | `shared.partner-group` | title; partners via `/partners` (CA7) |
 
-**Dynamic zones are replace-on-write.** Strapi does not patch a dynamic zone; writing
-it replaces the whole array. So `PUT /page` reconstructs all ten component entries from
-the submitted slot values in fixed order. That is precisely why CA5's fixed template is
-tractable — the handler knows the full expected shape and never has to merge.
+**Dynamic zones are replace-on-write** — Strapi does not patch a dynamic zone; writing
+it replaces the whole array. `PUT /page` must therefore rebuild the entire array, which
+makes the write rule load-bearing:
 
-A component present on the record but absent from the template (added by national in
-the admin panel) would be dropped by this reconstruction. The handler therefore
-**preserves unknown components in place** and edits only recognised slots.
+> Match each existing component **by position**, update the fields of recognised slots
+> from the submitted values, and pass through everything else unchanged — unknown
+> component types, and whatever ordering national has established in the admin panel.
+
+This is a positional merge, not a reconstruction from the table above. Emitting the
+table's order literally would silently reorder all 45 microsites on each chapter's
+first save, violating CA5's own "cannot add, remove, or reorder." The table documents
+*which slots are editable*; it does not define the array the handler writes.
+
+Template slots missing from an existing page are appended at the end rather than
+inserted, so the rule still holds for pages that predate a new slot.
 
 ---
 
@@ -447,10 +468,11 @@ supertest. Only a thin set of route-level integration tests pays that cost.
 This is roughly three plans, and the seams are stated so they can be planned
 separately:
 
-1. **Strapi authorization spine** — schema changes, role creation + bootstrap, the
-   scope helper and factory, slugs, publish handling, media endpoint. Ends with
-   **events end-to-end**, the vertical slice that exercises auth, scoping, slugs,
-   publish, and upload in one thin path.
+1. **Strapi authorization spine** — role creation + bootstrap, the scope helper and
+   factory, slugs, publish handling, media endpoint. Ends with **the events routes
+   proven API-only** — integration tests and curl against a real member JWT, no UI.
+   Deliberately a backend slice: plan 1 has no dependency on plan 2, and plan 2's
+   screens land on routes already known to work.
 2. **Frontend authoring screens** — identity plumbing, the `/account/chapter/*` routes,
    `FormField` additions, the multi-select picker, and the remaining resources against
    the proven spine.
