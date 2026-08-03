@@ -138,6 +138,21 @@ push their own record out.
 `ctx.state.user` does not populate relations, so `administeredChapters` is fetched
 once per request and memoized on the context.
 
+**Scope is keyed on `documentId`, never on the numeric entry `id`.** `chapter` is
+draft-and-publish, so every chapter is *two rows with different `id`s* sharing one
+`documentId` — locally, `boston` is `id 59` (draft) and `id 63` (published). Populating
+`administeredChapters` resolves at draft status, so it yields the draft id, while any
+caller reading published content holds the published one. Comparing entry ids therefore
+fails for every legitimate request while looking like a correct scope check. Related
+reads (`chapter.documentId`) and filters (`chapter: { documentId: { $in: … } }`) all use
+`documentId`.
+
+**Create payloads identify the chapter by `chapterSlug`, not by id.** The frontend never
+has a chapter id: `AccountMember.administeredChapters` carries `{name, slug}` and the
+authoring route is `/account/chapter/[chapterSlug]/…`. The handler resolves the slug to
+a chapter record and scope-checks its `documentId` — which costs nothing, since it
+already loads that record to build the slug prefix.
+
 ### Why not policies on core routes
 
 Stock core controllers accept arbitrary fields and arbitrary query filters. A policy
@@ -423,7 +438,8 @@ The handler:
 
 - requires the `Chapter Admin` role
 - enforces a size cap (5 MB)
-- validates mime against a **raster-only** allowlist: jpeg, png, webp, avif
+- **sniffs the file's actual bytes** and validates the detected type against a
+  raster-only allowlist: jpeg, png, webp, avif
 - delegates to `strapi.plugin('upload').service('upload')`, reusing the existing
   S3/CloudFront provider config unchanged
 - returns the media id for the form to reference
@@ -434,6 +450,21 @@ shared library.
 **SVG is excluded deliberately.** Uploads are served from the same CloudFront
 distribution as the site under `/uploads/*` — same origin. An SVG is an XML document
 that can carry `<script>`, making an uploaded SVG stored XSS on the site's own origin.
+
+**Sniffing is required because the upload *service* does not do it.** Strapi's own MIME
+detection lives in the upload plugin's **controllers** — `prepareUploadRequest` →
+`enforceUploadSecurity` in `controllers/content-api.js` and `controllers/admin-upload.js`
+— which is what sets `file.detectedMimeType`; `services/upload.js:123` merely prefers
+that value if present. Calling the service directly, as this design does in order to
+reuse the S3 provider config, skips detection entirely. Validating `file.mimetype` alone
+would be validating a client-supplied `Content-Type` header: an SVG posted as
+`image/png` would pass the allowlist, keep its `.svg` extension, and be stored — exactly
+the case the paragraph above exists to prevent. The allowlist must be checked against
+sniffed bytes, not the declared type.
+
+**Cap the size at the transport layer too.** `strapi::body` uses koa-body → formidable
+with a 200 MB default, so without a `formidable.maxFileSize` in `config/middlewares.js`
+a 200 MB upload is fully written to disk before the 5 MB check rejects it.
 
 **Two upload paths, both specified:**
 
