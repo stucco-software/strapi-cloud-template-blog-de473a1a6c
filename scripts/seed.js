@@ -36,7 +36,57 @@ const ul = (items) => ({
 // CTA component helper.
 const cta = (label, href, style) => ({ label, href, style });
 
+/**
+ * Refuse to run against anything but a local SQLite file.
+ *
+ * This script DELETES every document in nine collection types — including
+ * `form-submission`, which holds real member inquiries — and then repopulates
+ * them with sample data. It has no prompt and no dry run.
+ *
+ * It also reads whatever `.env` or environment variables happen to be present,
+ * so `node scripts/seed.js` in a shell with DATABASE_URL pointing at the
+ * deployed Postgres would silently destroy every page, event, chapter and
+ * contact submission in that environment. `make fresh` is a two-word path to
+ * the same place.
+ *
+ * Local SQLite runs unguarded. Anything else must be named explicitly:
+ *
+ *   SEED_CONFIRM="<DATABASE_NAME or DATABASE_URL>" node scripts/seed.js
+ *
+ * Typing the target is the point — it cannot be satisfied by accident.
+ */
+function assertSafeTarget() {
+  const client = process.env.DATABASE_CLIENT || 'sqlite';
+  const url = process.env.DATABASE_URL || '';
+  const name = process.env.DATABASE_NAME || '';
+  const target = url || name;
+
+  if (client === 'sqlite' && !url) return; // local dev — the intended case
+
+  if (target && process.env.SEED_CONFIRM === target) {
+    console.warn(`⚠️  Seeding a NON-LOCAL database (${client}): ${target}`);
+    return;
+  }
+
+  console.error(
+    [
+      '',
+      '✋ Refusing to seed.',
+      '',
+      `   This script wipes all seedable content and would run against: ${client}${target ? ` → ${target}` : ''}`,
+      '   That includes every form-submission (real member inquiries).',
+      '',
+      '   Local SQLite runs without a guard. To target anything else, name it:',
+      `     SEED_CONFIRM="${target || '<DATABASE_NAME or DATABASE_URL>'}" node scripts/seed.js`,
+      '',
+    ].join('\n')
+  );
+  process.exit(1);
+}
+
 async function main() {
+  assertSafeTarget();
+
   const app = await createStrapi(await compileStrapi()).load();
   app.log.level = 'error';
 
