@@ -5,6 +5,7 @@ const { chapterScopedResource } = require('../services/resource-factory');
 // Strapi's loadFiles deletes the require cache per file, so a service-registry
 // lookup can hand back a DIFFERENT class object and `instanceof` silently fails.
 const { ScopeError } = require('../services/scope');
+const { uploadImage } = require('../services/media');
 
 // Mirrors api::event.event minus `chapter` and `slug`, both set at create and
 // immutable after.
@@ -32,4 +33,20 @@ module.exports = {
   createEvent: guarded(events.create),
   updateEvent: guarded(events.update),
   deleteEvent: guarded(events.delete),
+
+  // Role-gated only: an upload has no owning chapter until a record references
+  // it, so there is nothing to scope-check here.
+  async uploadMedia(ctx) {
+    const file = ctx.request.files?.files;
+    if (!file || Array.isArray(file)) {
+      return ctx.badRequest('Attach exactly one file under the field name "files"');
+    }
+    try {
+      const uploaded = await uploadImage(file);
+      ctx.body = { data: { id: uploaded.id, url: uploaded.url, name: uploaded.name } };
+    } catch (err) {
+      if (err.name === 'UploadValidationError') return ctx.badRequest(err.message);
+      throw err;
+    }
+  },
 };

@@ -29,4 +29,47 @@ function validateUpload({ detectedMime, size } = {}) {
   return { ok: true };
 }
 
-module.exports = { validateUpload, ALLOWED_MIME, MAX_BYTES };
+const fs = require('node:fs');
+const { sniffImageType } = require('./image-sniff');
+
+const SNIFF_BYTES = 32;
+
+/**
+ * Validate and store one uploaded image.
+ *
+ * The type is decided by SNIFFING THE FILE'S BYTES, not by `file.mimetype`,
+ * which is only the client's Content-Type header. Strapi's own detection lives
+ * in the upload plugin's controllers and is skipped when calling the service
+ * directly — which we do in order to reuse the S3 provider config.
+ *
+ * No delete counterpart on purpose: admins detach media from records, they do
+ * not delete from the shared library.
+ */
+async function uploadImage(file, strapiInstance = global.strapi) {
+  const fd = await fs.promises.open(file.filepath, 'r');
+  let detectedMime;
+  try {
+    const { buffer, bytesRead } = await fd.read(Buffer.alloc(SNIFF_BYTES), 0, SNIFF_BYTES, 0);
+    detectedMime = sniffImageType(buffer.subarray(0, bytesRead));
+  } finally {
+    await fd.close();
+  }
+
+  const check = validateUpload({ detectedMime, size: file.size });
+  if (!check.ok) {
+    const err = new Error(check.reason);
+    err.name = 'UploadValidationError';
+    throw err;
+  }
+
+  // Force the stored type to the detected one so a mislabelled extension or
+  // header cannot survive into the media library.
+  const [uploaded] = await strapiInstance
+    .plugin('upload')
+    .service('upload')
+    .upload({ data: {}, files: { ...file, mimetype: detectedMime } });
+
+  return uploaded;
+}
+
+module.exports = { validateUpload, uploadImage, ALLOWED_MIME, MAX_BYTES };
