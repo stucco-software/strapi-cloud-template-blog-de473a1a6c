@@ -27,7 +27,15 @@ module.exports = ({ env }) => [
   'strapi::cors',
   'strapi::poweredBy',
   'strapi::query',
-  'strapi::body',
+  {
+    name: 'strapi::body',
+    config: {
+      // Reject oversized uploads at the transport layer. The chapter-admin
+      // media endpoint caps at 5MB; this stops a 200MB body being written to
+      // disk before that check ever runs. Headroom left for admin-panel uploads.
+      formidable: { maxFileSize: 20 * 1024 * 1024 },
+    },
+  },
   'strapi::session',
   'strapi::favicon',
   'strapi::public',
