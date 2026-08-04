@@ -125,6 +125,26 @@ describe('GET /api/chapter-admin/events', () => {
     expect(res.status).toBe(200);
     expect(res.body.data.every((e) => e.chapter?.slug === chapterA.slug)).toBe(true);
   });
+
+  it('populates figure, which the authoring UI needs to show the current image', async () => {
+    // `figure` is a media relation and is absent from list rows unless
+    // explicitly populated. Without this the edit screen renders no "current
+    // image" and looks like the upload silently failed.
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64'
+    );
+    const upload = await auth(api().post('/api/chapter-admin/media'))
+      .attach('files', png, { filename: 'figure.png', contentType: 'image/png' });
+
+    const created = await auth(api().post('/api/chapter-admin/events'))
+      .send({ title: title('With Figure'), chapterSlug: chapterA.slug, figure: upload.body.data.id });
+
+    const res = await auth(api().get('/api/chapter-admin/events?pageSize=100'));
+    const row = res.body.data.find((e) => e.documentId === created.body.data.documentId);
+    expect(row.figure).toBeTruthy();
+    expect(row.figure.url).toEqual(expect.any(String));
+  });
 });
 
 describe('DELETE /api/chapter-admin/events/:documentId', () => {

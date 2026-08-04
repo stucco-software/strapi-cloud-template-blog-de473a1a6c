@@ -12,6 +12,9 @@ const { uploadImage } = require('../services/media');
 const events = chapterScopedResource({
   uid: 'api::event.event',
   hasSlug: true,
+  // `figure` is a media relation, so it is absent from list rows unless
+  // populated. The authoring UI reads it to show the current image.
+  listPopulate: { figure: { fields: ['url', 'name'] } },
   editableFields: [
     'title', 'startsAt', 'endsAt', 'description',
     'memberPrice', 'publicPrice', 'location', 'locationUrl', 'figure',

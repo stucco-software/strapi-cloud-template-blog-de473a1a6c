@@ -17,10 +17,16 @@ const MAX_PAGE_SIZE = 100;
  * @param {string}   uid            e.g. 'api::event.event'
  * @param {string[]} editableFields whitelist; MUST NOT contain 'chapter' or 'slug'
  * @param {boolean}  hasSlug        generate a chapter-prefixed slug on create
+ * @param {object}   listPopulate   extra relations to populate on list, merged
+ *                                  with `chapter`. Media relations are NOT
+ *                                  returned unless named here — an authoring UI
+ *                                  that renders "current image" needs `figure`,
+ *                                  and without it silently shows nothing.
  * @param {object}   strapiInstance injected for testability
  */
 function chapterScopedResource({
-  uid, editableFields, hasSlug = false, listFields = null, strapiInstance = null,
+  uid, editableFields, hasSlug = false, listFields = null, listPopulate = null,
+  strapiInstance = null,
 }) {
   if (editableFields.includes('chapter') || editableFields.includes('slug')) {
     // A misconfiguration here silently reopens chapter reassignment. Fail at load.
@@ -64,7 +70,7 @@ function chapterScopedResource({
         docs().findMany({
           filters,
           ...(listFields ? { fields: listFields } : {}),
-          populate: { chapter: { fields: ['name', 'slug'] } },
+          populate: { chapter: { fields: ['name', 'slug'] }, ...(listPopulate ?? {}) },
           sort: ['updatedAt:desc'],
           limit: pageSize,
           start: (page - 1) * pageSize,
