@@ -217,6 +217,13 @@ Replace the JSDoc block and the destructure:
  * @param {Function} validateData   async (data, { ctx, chapterDocumentId, strapi })
  *                                  => void. Throws ScopeError or SlugError to
  *                                  reject. Runs on create AND update.
+ *                                  NOTE: it may also NORMALISE `data` in place —
+ *                                  the committee hook rewrites `members` to the
+ *                                  longhand relation form once it has checked
+ *                                  them. That makes it a validate-and-coerce
+ *                                  step, not a pure predicate; keep the two
+ *                                  concerns adjacent rather than walking the
+ *                                  same array twice.
  * @param {object}   strapiInstance injected for testability
  */
 function chapterScopedResource({
@@ -451,6 +458,9 @@ async function assertMembersInChapter(strapiInstance, chapterDocumentId, memberD
         documentId: { $in: wanted },
         chapter: { documentId: chapterDocumentId },
       },
+      // `fields` always unions `id` and `documentId` regardless of what is
+      // asked for (verified in plan 1), so documentId comes back here even
+      // though it is not listed. Do not "fix" this by adding it.
       fields: ['id'],
       limit: -1,
     });
@@ -1302,7 +1312,7 @@ export function toCommitteePayload(
 cd /Users/nk/Projects/AREAA/areaa-frontend && npx vitest run tests/unit/committee-form.test.ts
 ```
 
-Expected: PASS, 9 tests.
+Expected: PASS, 8 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1451,7 +1461,7 @@ cd /Users/nk/Projects/AREAA/areaa-frontend && \
   npx vitest run tests/unit/news-form.test.ts && npm test
 ```
 
-Expected: 8 tests, then **41 across 5 files** (24 from plan 2, 9 committee, 8 news).
+Expected: 8 tests, then **40 across 5 files** (24 from plan 2, 8 committee, 8 news).
 
 - [ ] **Step 5: Commit**
 
@@ -2554,7 +2564,7 @@ cd /Users/nk/Projects/AREAA/areaa-cms && pkill -f "strapi develop" ; \
 cd /Users/nk/Projects/AREAA/areaa-frontend && npm test && npm run check
 ```
 
-Expected: **87 CMS**, **41 frontend**, 0 typecheck errors.
+Expected: **87 CMS**, **40 frontend**, 0 typecheck errors.
 
 - [ ] **Step 2: Run the CMS suite again without reseeding**
 
@@ -2654,7 +2664,7 @@ Expected: clean in both.
 
 ## Done when
 
-- **87 CMS tests and 41 frontend tests green**, CMS twice in a row without reseeding and without row growth.
+- **87 CMS tests and 40 frontend tests green**, CMS twice in a row without reseeding and without row growth.
 - A chapter admin can create, edit and delete committees, and change who sits on them — **including removing everyone** — with JavaScript disabled.
 - A committee write naming a member of another chapter returns **403 with "do not belong"**, not a 200 and not a 403 for an incidental reason.
 - News publishes with a chapter-prefixed slug and the **author forced to the session user**, and a missing body is a 400.
