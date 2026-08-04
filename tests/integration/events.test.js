@@ -14,7 +14,23 @@ beforeAll(async () => {
   tokenA = await jwtFor(strapi, admin.id);
 });
 
-afterAll(async () => { await shutdown(); });
+afterAll(async () => {
+  // Delete everything this run created. Without it each run leaves ~8 published
+  // events behind, and they accumulate: the public /events page fetches
+  // pageSize 100 sorted by startsAt ascending, these fixtures have no startsAt,
+  // and SQLite sorts NULLs first — so after enough runs the test residue fills
+  // the whole window and real events stop appearing on the live site.
+  const junk = await strapi.documents('api::event.event').findMany({
+    filters: { title: { $contains: String(RUN) } },
+    fields: ['title'],
+    limit: -1,
+    status: 'draft',
+  });
+  for (const e of junk) {
+    await strapi.documents('api::event.event').delete({ documentId: e.documentId });
+  }
+  await shutdown();
+});
 
 const api = () => request(strapi.server.httpServer);
 const auth = (r) => r.set('Authorization', `Bearer ${tokenA}`);
