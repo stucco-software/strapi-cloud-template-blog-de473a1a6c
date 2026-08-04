@@ -3,12 +3,23 @@
 // Self-service permissions the member area relies on. Granted to the built-in
 // Authenticated role on boot so the profile page works without a manual admin
 // toggle (and so it survives fresh DBs / new environments).
+//   - user.me             → GET /api/users/me            (read own profile)
 //   - user.updateMe       → PUT /api/users/me            (edit own profile)
 //   - auth.changePassword → POST /api/auth/change-password
+//   - auth.logout         → POST /api/auth/logout
 //   - user.directory      → GET /api/users/directory     (privacy-safe member list)
+//
+// `user.me` and `auth.logout` are part of Strapi's default Authenticated role
+// rather than something this file introduced, so listing them here is a no-op
+// for that role. They are here because CHAPTER_ADMIN_GRANTS spreads this array:
+// a role built purely from the three custom grants gets a 403 on GET
+// /api/users/me, which breaks sign-in for chapter admins entirely — the
+// frontend resolves every request's session through that endpoint.
 const AUTHENTICATED_GRANTS = [
+  'plugin::users-permissions.user.me',
   'plugin::users-permissions.user.updateMe',
   'plugin::users-permissions.auth.changePassword',
+  'plugin::users-permissions.auth.logout',
   'plugin::users-permissions.user.directory',
 ];
 

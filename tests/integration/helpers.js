@@ -77,6 +77,12 @@ export async function makeChapterAdmin(strapi, { email, chapterIds }) {
 
   return strapi.plugin('users-permissions').service('user').add({
     username: email, email, password: 'Password123!', confirmed: true,
+    // Required for POST /api/auth/local to find them: the local strategy filters
+    // on `provider: 'local'`, so a user created without it has a valid password
+    // hash and still fails login with "Invalid identifier or password".
+    // scripts/seed.js sets this everywhere; these tests mint JWTs directly and
+    // so never noticed.
+    provider: 'local',
     firstName: 'Test', lastName: 'Admin',
     role: role.id,
     administeredChapters: chapterIds,

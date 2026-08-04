@@ -94,13 +94,30 @@ module.exports = (plugin) => {
       .documents('plugin::users-permissions.user')
       .findOne({
         documentId: ctx.state.user.documentId,
-        populate: { chapter: { fields: ['name', 'slug'] } },
+        populate: {
+          chapter: { fields: ['name', 'slug'] },
+          // The sanitizer drops both of these — `role` is private on the user
+          // model and the Authenticated role has no chapter read-grant — so
+          // they are re-attached below, same as `chapter`.
+          role: { fields: ['name', 'type'] },
+          administeredChapters: { fields: ['name', 'slug'] },
+        },
       });
 
     const body = await sanitizeOutput(user, ctx);
     if (user?.chapter) {
       body.chapter = { name: user.chapter.name, slug: user.chapter.slug };
     }
+    if (user?.role) {
+      body.role = { name: user.role.name, type: user.role.type };
+    }
+    // Drives the whole chapter-admin surface on the frontend. Always an array,
+    // never undefined, so callers need no guard.
+    body.administeredChapters = (user?.administeredChapters ?? []).map((c) => ({
+      name: c.name,
+      slug: c.slug,
+    }));
+
     for (const field of SELF_VISIBLE_PRIVATE_FIELDS) {
       if (user && field in user) body[field] = user[field];
     }
