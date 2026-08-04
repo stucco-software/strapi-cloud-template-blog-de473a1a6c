@@ -1336,7 +1336,9 @@ export interface PluginUsersPermissionsUser
       'manyToMany',
       'api::chapter.chapter'
     >;
-    autoRenew: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    autoRenew: Schema.Attribute.Boolean &
+      Schema.Attribute.Private &
+      Schema.Attribute.DefaultTo<false>;
     bio: Schema.Attribute.Text;
     blocked: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     chapter: Schema.Attribute.Relation<'manyToOne', 'api::chapter.chapter'>;
@@ -1348,9 +1350,10 @@ export interface PluginUsersPermissionsUser
       Schema.Attribute.Private;
     designations: Schema.Attribute.String;
     displayName: Schema.Attribute.String;
-    duesPaidThrough: Schema.Attribute.Date;
+    duesPaidThrough: Schema.Attribute.Date & Schema.Attribute.Private;
     email: Schema.Attribute.Email &
       Schema.Attribute.Required &
+      Schema.Attribute.Private &
       Schema.Attribute.SetMinMaxLength<{
         minLength: 6;
       }>;
@@ -1366,14 +1369,14 @@ export interface PluginUsersPermissionsUser
     > &
       Schema.Attribute.Private;
     location: Schema.Attribute.String;
-    memberSince: Schema.Attribute.Date;
+    memberSince: Schema.Attribute.Date & Schema.Attribute.Private;
     password: Schema.Attribute.Password &
       Schema.Attribute.Private &
       Schema.Attribute.SetMinMaxLength<{
         minLength: 6;
       }>;
-    phone: Schema.Attribute.String;
-    postalCode: Schema.Attribute.String;
+    phone: Schema.Attribute.String & Schema.Attribute.Private;
+    postalCode: Schema.Attribute.String & Schema.Attribute.Private;
     provider: Schema.Attribute.String;
     publishedAt: Schema.Attribute.DateTime;
     resetPasswordToken: Schema.Attribute.String & Schema.Attribute.Private;
@@ -1384,6 +1387,7 @@ export interface PluginUsersPermissionsUser
     status: Schema.Attribute.Enumeration<
       ['Active', 'Lapsed', 'Pending', 'Honorary']
     > &
+      Schema.Attribute.Private &
       Schema.Attribute.DefaultTo<'Pending'>;
     title: Schema.Attribute.String;
     updatedAt: Schema.Attribute.DateTime;
