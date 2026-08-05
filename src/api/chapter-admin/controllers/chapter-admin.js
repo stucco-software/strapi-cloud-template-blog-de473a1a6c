@@ -4,7 +4,14 @@ const { chapterScopedResource } = require('../services/resource-factory');
 // ScopeError must be obtained by direct require, never via strapi.service(...).
 // Strapi's loadFiles deletes the require cache per file, so a service-registry
 // lookup can hand back a DIFFERENT class object and `instanceof` silently fails.
-const { ScopeError } = require('../services/scope');
+const {
+  ScopeError, resolveAdministeredChapters, assertChapterScope,
+} = require('../services/scope');
+const { SlugError } = require('../services/slug');
+const { BadInputError, pickWhitelisted } = require('../services/fields');
+const {
+  toDirectoryRow, normaliseMemberIds, assertMembersInChapter,
+} = require('../services/members');
 const { uploadImage } = require('../services/media');
 
 // Mirrors api::event.event minus `chapter` and `slug`, both set at create and
@@ -21,15 +28,74 @@ const events = chapterScopedResource({
   ],
 });
 
-/** Turn a ScopeError into a 403; let everything else surface. */
+// Committees. No slug field on this type, so hasSlug stays false. `members` is
+// writable but every id is normalised and then checked against the chapter's
+// own membership before it reaches the write.
+const committees = chapterScopedResource({
+  uid: 'api::committee.committee',
+  editableFields: ['name', 'description', 'members'],
+  listPopulate: { members: { fields: ['firstName', 'lastName', 'displayName', 'title'] } },
+  requiredFields: ['name'],
+  async validateData(data, { chapterDocumentId, strapi }) {
+    // Absent means unchanged; [] means clear. Only touch it when present.
+    if (!('members' in data)) return;
+    const ids = normaliseMemberIds(data.members);              // BadInputError -> 400
+    await assertMembersInChapter(strapi, chapterDocumentId, ids); // ScopeError -> 403
+    data.members = ids.map((documentId) => ({ documentId }));
+  },
+});
+
+// News. `author` is server-set from the session so an admin cannot publish
+// under another member's byline. `body` is required:true in the schema.
+const news = chapterScopedResource({
+  uid: 'api::news-item.news-item',
+  hasSlug: true,
+  editableFields: ['title', 'excerpt', 'body', 'figure', 'publishedDate'],
+  listPopulate: {
+    figure: { fields: ['url', 'name'] },
+    author: { fields: ['firstName', 'lastName', 'displayName'] },
+  },
+  requiredFields: ['title', 'body'],
+  deriveOnCreate: (ctx) => ({ author: { documentId: ctx.state.user.documentId } }),
+});
+
+/** ScopeError -> 403; client-input errors -> 400; everything else surfaces. */
 const guarded = (handler) => async (ctx) => {
   try {
     return await handler(ctx);
   } catch (err) {
     if (err instanceof ScopeError) return ctx.forbidden(err.message);
+    if (err instanceof BadInputError || err instanceof SlugError) {
+      return ctx.badRequest(err.message);
+    }
     throw err;
   }
 };
+
+// Query params can arrive as string | string[] (repeated keys); take the first,
+// matching the `firstStr` helper the users-permissions extension already uses.
+const firstStr = (v) => (Array.isArray(v) ? v[0] : v ?? '').toString().trim();
+
+/**
+ * Resolve a chapterSlug to a chapter this caller administers.
+ *
+ * Returns `{ chapter }` on success or `{ error, notFound }` describing how to
+ * reject, so the bespoke handlers stop repeating the same six lines. Throws
+ * ScopeError -> 403 via `guarded` when the chapter is not administered.
+ */
+async function resolveScopedChapter(ctx, rawSlug) {
+  const administered = await resolveAdministeredChapters(ctx);
+  const chapterSlug = firstStr(rawSlug);
+  if (!chapterSlug) return { error: 'chapterSlug is required' };
+
+  const chapter = await strapi.documents('api::chapter.chapter').findFirst({
+    filters: { slug: chapterSlug }, fields: ['name', 'slug', 'email'], status: 'draft',
+  });
+  if (!chapter) return { error: 'No such chapter', notFound: true };
+
+  assertChapterScope(administered, chapter.documentId);
+  return { chapter };
+}
 
 module.exports = {
   listEvents: guarded(events.list),
@@ -52,4 +118,100 @@ module.exports = {
       throw err;
     }
   },
+
+  listCommittees: guarded(committees.list),
+  createCommittee: guarded(committees.create),
+  updateCommittee: guarded(committees.update),
+  deleteCommittee: guarded(committees.delete),
+
+  listNews: guarded(news.list),
+  createNews: guarded(news.create),
+  updateNews: guarded(news.update),
+  deleteNews: guarded(news.delete),
+
+  // --- members -----------------------------------------------------------
+  // Read-only. Feeds the committee picker; plan 4 reuses it for the
+  // member-group slots. Hand-built rows — see services/members.js.
+  listMembers: guarded(async (ctx) => {
+    const { chapter, error, notFound } = await resolveScopedChapter(ctx, ctx.query.chapterSlug);
+    if (error) return notFound ? ctx.notFound(error) : ctx.badRequest(error);
+
+    const rows = await strapi.documents('plugin::users-permissions.user').findMany({
+      // `confirmed` matches the established directory filter; without it the
+      // picker offers people who have never completed signup.
+      filters: {
+        chapter: { documentId: chapter.documentId },
+        confirmed: true,
+        blocked: { $ne: true },
+      },
+      fields: ['firstName', 'lastName', 'displayName', 'title'],
+      sort: ['lastName:asc', 'firstName:asc'],
+      limit: -1,
+    });
+
+    ctx.body = { data: rows.map(toDirectoryRow) };
+  }),
+
+  // --- chapter settings --------------------------------------------------
+  getChapter: guarded(async (ctx) => {
+    const { chapter, error, notFound } = await resolveScopedChapter(ctx, ctx.query.chapterSlug);
+    if (error) return notFound ? ctx.notFound(error) : ctx.badRequest(error);
+
+    // Hand-built: `administrators` must never ship, or chapter admins can see
+    // (and eventually appoint) each other.
+    ctx.body = { data: { documentId: chapter.documentId, name: chapter.name,
+      slug: chapter.slug, email: chapter.email ?? '' } };
+  }),
+
+  updateChapter: guarded(async (ctx) => {
+    const input = ctx.request.body?.data ?? ctx.request.body ?? {};
+    const { chapter, error, notFound } = await resolveScopedChapter(ctx, input.chapterSlug);
+    if (error) return notFound ? ctx.notFound(error) : ctx.badRequest(error);
+
+    // `slug` is absent from this whitelist deliberately: it is a uid that will
+    // not regenerate, and already-written event slug prefixes would not follow
+    // it if it did.
+    const data = pickWhitelisted(input, ['name', 'email']);
+    if ('name' in data && data.name === '') return ctx.badRequest('name is required');
+
+    // `chapter.email` is an `email` attribute: Strapi rejects '' with "email
+    // cannot be empty" (400) but accepts null. Without this an admin who empties
+    // the field gets a generic save error and can never clear it.
+    if ('email' in data && data.email === '') data.email = null;
+
+    ctx.body = { data: await strapi.documents('api::chapter.chapter').update({
+      documentId: chapter.documentId, data, status: 'published',
+    }) };
+  }),
+
+  // --- submissions -------------------------------------------------------
+  // form-submission is draftAndPublish:FALSE, so no status flag anywhere here.
+  listSubmissions: guarded(async (ctx) => {
+    const { chapter, error, notFound } = await resolveScopedChapter(ctx, ctx.query.chapterSlug);
+    if (error) return notFound ? ctx.notFound(error) : ctx.badRequest(error);
+
+    const rows = await strapi.documents('api::form-submission.form-submission').findMany({
+      filters: { chapter: { documentId: chapter.documentId } },
+      populate: { chapter: { fields: ['name', 'slug'] } },
+      sort: ['submittedAt:desc'],
+      limit: 200,   // see Known limitations — no pagination on this screen yet
+    });
+    ctx.body = { data: rows };
+  }),
+
+  updateSubmission: guarded(async (ctx) => {
+    const administered = await resolveAdministeredChapters(ctx);
+    const { documentId } = ctx.params;
+
+    const record = await strapi.documents('api::form-submission.form-submission').findOne({
+      documentId, populate: { chapter: { fields: ['slug'] } },
+    });
+    if (!record) return ctx.notFound();
+    assertChapterScope(administered, record.chapter?.documentId ?? null);
+
+    const input = ctx.request.body?.data ?? ctx.request.body ?? {};
+    ctx.body = { data: await strapi.documents('api::form-submission.form-submission').update({
+      documentId, data: { handled: Boolean(input.handled) },
+    }) };
+  }),
 };

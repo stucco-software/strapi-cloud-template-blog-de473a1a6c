@@ -1,35 +1,16 @@
 'use strict';
 
-// Self-service permissions the member area relies on. Granted to the built-in
-// Authenticated role on boot so the profile page works without a manual admin
-// toggle (and so it survives fresh DBs / new environments).
-//   - user.me             → GET /api/users/me            (read own profile)
-//   - user.updateMe       → PUT /api/users/me            (edit own profile)
-//   - auth.changePassword → POST /api/auth/change-password
-//   - auth.logout         → POST /api/auth/logout
-//   - user.directory      → GET /api/users/directory     (privacy-safe member list)
-//
-// `user.me` and `auth.logout` are part of Strapi's default Authenticated role
-// rather than something this file introduced, so listing them here is a no-op
-// for that role. They are here because CHAPTER_ADMIN_GRANTS spreads this array:
-// a role built purely from the three custom grants gets a 403 on GET
-// /api/users/me, which breaks sign-in for chapter admins entirely — the
-// frontend resolves every request's session through that endpoint.
-const AUTHENTICATED_GRANTS = [
-  'plugin::users-permissions.user.me',
-  'plugin::users-permissions.user.updateMe',
-  'plugin::users-permissions.auth.changePassword',
-  'plugin::users-permissions.auth.logout',
-  'plugin::users-permissions.user.directory',
-];
+const {
+  AUTHENTICATED_GRANTS, CHAPTER_ADMIN_GRANTS,
+} = require('./api/chapter-admin/grants');
 
 // Chapter admins are ordinary up_users with an elevated role — never Strapi
 // admin-panel seats, which are billed per user. `user.role` is manyToOne, so a
-// Chapter Admin is NOT also Authenticated: this role must repeat the
+// Chapter Admin is NOT also Authenticated: the role must repeat the
 // Authenticated grants or chapter admins lose their own profile page.
 //
-// Capability lives here; SCOPE lives in user.administeredChapters and is
-// enforced per-request in src/api/chapter-admin. Both are required.
+// Capability lives in the grants list; SCOPE lives in user.administeredChapters
+// and is enforced per-request in src/api/chapter-admin. Both are required.
 const CHAPTER_ADMIN_ROLE = {
   name: 'Chapter Admin',
   description:
@@ -37,15 +18,6 @@ const CHAPTER_ADMIN_ROLE = {
     "controlled by the user's administeredChapters relation, not by this role.",
   type: 'chapter_admin',
 };
-
-const CHAPTER_ADMIN_GRANTS = [
-  ...AUTHENTICATED_GRANTS,
-  'api::chapter-admin.chapter-admin.listEvents',
-  'api::chapter-admin.chapter-admin.createEvent',
-  'api::chapter-admin.chapter-admin.updateEvent',
-  'api::chapter-admin.chapter-admin.deleteEvent',
-  'api::chapter-admin.chapter-admin.uploadMedia',
-];
 
 async function grant(strapi, roleId, actions) {
   for (const action of actions) {
