@@ -33,7 +33,7 @@ Four resources, backend and screens together: **committees**, **news**, **chapte
 Committees is first because it is the most valuable and the most expensive. It needs two things nothing else has yet:
 
 - **`GET /chapter-admin/members`**, so the form can offer the chapter's members as candidates.
-- **The multi-select picker**, which the spec calls out as carrying more UI surface than anything else in the design. Built once here, reused four more times in plan 4.
+- **The multi-select picker**, which the spec calls out as carrying more UI surface than anything else in the design. Built once here, reused five more times in plan 4 (partners, three `member-group` slots, `upcoming-events`).
 
 **Deferred to plan 4:** `/page` (the fixed-template microsite editor) and `/partners`. Both depend on the picker this plan builds.
 
@@ -52,7 +52,7 @@ So the public site tells visitors their message was sent when nothing was sent, 
 
 **This plan builds the admin side exactly as the spec defines it and does not wire capture.** A public write endpoint brings spam handling, rate limiting, a Public-role grant and chapter association — a separate subsystem the design never scoped.
 
-Task 20 Step 1 seeds a submission through the document service so the screen is verifiable. **Task 21 files the public-site bug**, so the note survives this plan being closed.
+Task 20 Step 2 seeds a submission through the document service so the screen is verifiable. **Task 21 files the public-site bug**, so the note survives this plan being closed.
 
 If you would rather this plan include capture, stop and say so; it is roughly three extra tasks and one design decision.
 
@@ -105,7 +105,7 @@ Checked against the installed Strapi 5.45.1 by executing the calls.
 | `status: 'published'` on a non-D&P type is accepted and ignored | ✅ Verified; CA11's warning is about clarity, not a crash |
 | Nested `populate: { x: { fields: [...] } }` still returns `documentId` | ✅ `transform/populate.js` runs nested fields through `transformFields`. The member pre-check in Chunks 3–5 depends on this |
 | `GET /api/users/directory` returns **no identifier** | ✅ `DirectoryMember` is display-only, so the picker cannot reuse it |
-| `experimental_AstroContainer` exists in Astro 6.4.2 | ✅ Exported from `astro/container`; enables the Task 12 component test |
+| `experimental_AstroContainer` exists in Astro 6.4.2 | ✅ Exported from `astro/container`; enables the Task 8 component test |
 
 ### Corrected from v1
 
@@ -161,6 +161,8 @@ News must force `author` to the session user and reject a missing `body`; commit
 **Files:** Modify `src/api/chapter-admin/services/fields.js`, `src/api/chapter-admin/services/resource-factory.js`
 
 - [ ] **Step 1: Add `BadInputError` to `fields.js`**
+
+Append the class, and **replace** the existing `module.exports` line rather than adding a second one.
 
 The factory needs a way for a validation hook to produce a **400**. Today only `ScopeError` (403) and `SlugError` (400, and only around `buildSlug`) exist. Append to `fields.js`, and add it to the exports:
 
@@ -287,7 +289,8 @@ Replace from `const data = pickWhitelisted(...)` down to the `ctx.body =` line:
       }
 
       // Publish explicitly: these types are draftAndPublish and the documents
-      // API writes a DRAFT unless told otherwise.
+      // API writes a DRAFT unless told otherwise. Without this the save
+      // succeeds and is invisible on the live site.
       ctx.body = { data: await docs().create({ data, status: 'published' }) };
 ```
 
@@ -637,7 +640,14 @@ function toDirectoryRow(user) {
  * check or reached Knex as `whereIn(..., [undefined])`.
  */
 function normaliseMemberIds(raw) {
-  if (raw === undefined || raw === null) return [];
+  if (raw === undefined) return [];
+  // `null` is NOT treated as "absent". The committee hook guards on
+  // `'members' in data`, which is true for null, so returning [] here would
+  // clear the whole roster on `members: null` while `members: 'x'` correctly
+  // 400s. Reject it explicitly instead.
+  if (raw === null) {
+    throw new BadInputError('members must be a list, or omitted entirely');
+  }
   if (!Array.isArray(raw)) {
     throw new BadInputError('members must be a list');
   }
@@ -702,7 +712,7 @@ cd /Users/nk/Projects/AREAA/areaa-cms && PATH="/opt/homebrew/bin:$PATH" \
   npx vitest run tests/unit/members.test.js
 ```
 
-Expected: PASS, 17 tests.
+Expected: PASS, 18 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -716,7 +726,7 @@ cd /Users/nk/Projects/AREAA/areaa-cms && \
 
 ### Task 3: A grant-consistency test that actually detects a typo
 
-v1 verified the wiring by counting permission rows and expecting 18. **That check is inert.** `syncPermissions` deletes DB permissions whose action is absent from the live controller registry, but it runs in the *plugin* bootstrap, which precedes `src/index.js`'s bootstrap — and `grant()` inserts unconditionally. A misspelled action is deleted and immediately re-created, so the count reads 18 either way.
+v1 verified the wiring by counting permission rows and expecting 18. **That check is inert.** `syncPermissions` deletes DB permissions whose action is absent from the live controller registry, and it runs in the *plugin* bootstrap, which precedes `src/index.js`'s. `grant()` then does a `findOne` and inserts when absent — which, after that delete, it always is. So a misspelled action is pruned and immediately re-created, and the count reads 18 either way.
 
 **Files:** Create `tests/unit/grants.test.js`
 
@@ -772,22 +782,18 @@ module.exports = {
 };
 ```
 
-- [ ] **Step 3: Confirm it fails on a deliberate typo, then passes**
+- [ ] **Step 3: Confirm it fails right now**
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-cms && PATH="/opt/homebrew/bin:$PATH" \
   npx vitest run tests/unit/grants.test.js
 ```
 
-Expected at this point: **FAIL** — the controller does not yet export the 13 new actions. That is correct; Task 4 makes it pass. Re-run it after Task 4 and expect PASS, 3 tests.
+Expected: **FAIL** — the controller does not yet export the 13 new actions. That is the point of writing it first.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Do NOT commit yet**
 
-```bash
-cd /Users/nk/Projects/AREAA/areaa-cms && \
-  git add tests/unit/grants.test.js src/index.js && \
-  git commit -m "test: assert grants, routes and controller exports agree"
-```
+This test stays red until Task 4 wires the routes, and committing it here would leave `npm test` failing across a task boundary — which breaks the full-suite gate an executing agent runs after every task. Leave `tests/unit/grants.test.js` and the `src/index.js` export uncommitted; **Task 4 Step 8 commits them alongside the code that makes them pass.**
 
 ---
 
@@ -801,14 +807,23 @@ All five at once, because they share one controller file and one routes table.
 
 `guarded` currently maps only `ScopeError`. A `BadInputError` or `SlugError` thrown by a `validateData` hook would propagate uncaught and 500 — v1 documented a contract it did not implement.
 
+Keep the existing `chapterScopedResource` and `uploadMedia` requires; this block
+**replaces the error-class requires and adds the new ones**. Note the ScopeError
+comment already in the file is preserved — it protects the mechanism `guarded`
+depends on, and `members.js` now depends on it too.
+
 ```js
-const { ScopeError } = require('../services/scope');
+// ScopeError must be obtained by direct require, never via strapi.service(...).
+// Strapi's loadFiles deletes the require cache per file, so a service-registry
+// lookup can hand back a DIFFERENT class object and `instanceof` silently fails.
+const {
+  ScopeError, resolveAdministeredChapters, assertChapterScope,
+} = require('../services/scope');
 const { SlugError } = require('../services/slug');
 const { BadInputError, pickWhitelisted } = require('../services/fields');
 const {
   toDirectoryRow, normaliseMemberIds, assertMembersInChapter,
 } = require('../services/members');
-const { resolveAdministeredChapters, assertChapterScope } = require('../services/scope');
 
 /** ScopeError -> 403; client-input errors -> 400; everything else surfaces. */
 const guarded = (handler) => async (ctx) => {
@@ -863,20 +878,43 @@ const news = chapterScopedResource({
 
 Both list handlers take a `chapterSlug`. v1's did not, so a multi-chapter admin visiting `/account/chapter/A/submissions` saw chapter B's messages — and for committees it was worse than cosmetic, because clicking through rendered the form with the wrong chapter's members and every save 403'd with no way forward.
 
+Define this helper at **module scope, above `module.exports`** — not as a key on
+the exported object, or `grants.test.js` will compare it against the routes and
+fail with a confusing diff:
+
 ```js
-  /** Resolve a chapterSlug query/body param to a scope-checked chapter. */
-  // (helper, defined next to the handlers)
+// Query params can arrive as string | string[] (repeated keys); take the first,
+// matching the `firstStr` helper the users-permissions extension already uses.
+const firstStr = (v) => (Array.isArray(v) ? v[0] : v ?? '').toString().trim();
 
+/**
+ * Resolve a chapterSlug to a chapter this caller administers.
+ *
+ * Returns `{ chapter }` on success or `{ error }` describing how to reject, so
+ * the four bespoke handlers stop repeating the same six lines.
+ */
+async function resolveScopedChapter(ctx, rawSlug) {
+  const administered = await resolveAdministeredChapters(ctx);
+  const chapterSlug = firstStr(rawSlug);
+  if (!chapterSlug) return { error: 'chapterSlug is required' };
+
+  const chapter = await strapi.documents('api::chapter.chapter').findFirst({
+    filters: { slug: chapterSlug }, fields: ['name', 'slug', 'email'], status: 'draft',
+  });
+  if (!chapter) return { error: 'No such chapter', notFound: true };
+
+  // Throws ScopeError -> 403 via `guarded`.
+  assertChapterScope(administered, chapter.documentId);
+  return { chapter };
+}
+```
+
+Then the handlers, inside `module.exports`:
+
+```js
   listMembers: guarded(async (ctx) => {
-    const administered = await resolveAdministeredChapters(ctx);
-    const chapterSlug = String(ctx.query.chapterSlug ?? '');
-    if (!chapterSlug) return ctx.badRequest('chapterSlug is required');
-
-    const chapter = await strapi.documents('api::chapter.chapter').findFirst({
-      filters: { slug: chapterSlug }, fields: ['slug'], status: 'draft',
-    });
-    if (!chapter) return ctx.notFound('No such chapter');
-    assertChapterScope(administered, chapter.documentId);
+    const { chapter, error, notFound } = await resolveScopedChapter(ctx, ctx.query.chapterSlug);
+    if (error) return notFound ? ctx.notFound(error) : ctx.badRequest(error);
 
     const rows = await strapi.documents('plugin::users-permissions.user').findMany({
       // `confirmed` matches the established directory filter; without it the
@@ -1053,8 +1091,11 @@ Expected: `BOOTSTRAP OK`, then `18`. Treat this as a smoke check only — per Ta
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-cms && \
-  git add src/api/chapter-admin/ src/index.js && \
-  git commit -m "feat: members, committees, news, chapter and submissions routes"
+  git add src/api/chapter-admin/ src/index.js tests/unit/grants.test.js && \
+  git commit -m "feat: members, committees, news, chapter and submissions routes
+
+Includes tests/unit/grants.test.js from Task 3, held back so the suite is
+never committed red."
 ```
 
 ---
@@ -1065,9 +1106,42 @@ cd /Users/nk/Projects/AREAA/areaa-cms && \
 
 v1's committee tests **could not fail**: create asserted only `status 200`, and the replace test updated to `[]` and asserted length 0 — which an implementation that silently drops `members` also produces. Every assertion below reads the stored record back.
 
-**Files:** Create `tests/integration/committees.test.js`
+**Files:** Modify `tests/integration/events.test.js`; create `tests/integration/committees.test.js`
 
-- [ ] **Step 1: Write the tests**
+- [ ] **Step 1: Stop `events.test.js` leaking a user every run**
+
+Plan 2's suite creates `admin-a-${RUN}@areaa.test` and deletes only its events, so
+`up_users` grows by one on every `npm test`. Verified: **17 leaked rows out of 28**
+at the time of writing. Task 6 Step 3's row-count gate cannot pass until this is
+fixed, and the gate is the only thing that detects the leak — a stray user does
+not change any test count.
+
+In `events.test.js`'s `afterAll`, after the event cleanup, add:
+
+```js
+  // Fixture users accumulate otherwise; the suite stays green while up_users
+  // grows every run. They carry no `chapter`, so they are invisible to the
+  // member directory today — but that is luck, not design.
+  const users = await strapi.query('plugin::users-permissions.user')
+    .findMany({ where: { email: { $contains: String(RUN) } } });
+  for (const u of users) {
+    await strapi.query('plugin::users-permissions.user').delete({ where: { id: u.id } });
+  }
+```
+
+Then purge the existing residue once:
+
+```bash
+pkill -f "strapi develop" ; \
+  sqlite3 .tmp/data.db "DELETE FROM up_users WHERE email LIKE 'admin-a-%@areaa.test' \
+    OR email IN ('probe@areaa.test','curl-admin@areaa.test');" && \
+  sqlite3 .tmp/data.db "SELECT COUNT(*) FROM up_users;"
+```
+
+Expected: a count that no longer grows across runs. Keep `chapadmin@areaa.test`
+and `plainmember@areaa.test` — Task 20 signs in as both.
+
+- [ ] **Step 2: Write the tests**
 
 ```js
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -1279,26 +1353,30 @@ describe('DELETE /api/chapter-admin/committees/:documentId', () => {
 });
 ```
 
-- [ ] **Step 2: Run them**
+- [ ] **Step 3: Run them**
 
 ```bash
-pkill -f "strapi develop" ; \
+cd /Users/nk/Projects/AREAA/areaa-cms && pkill -f "strapi develop" ; \
   PATH="/opt/homebrew/bin:$PATH" npx vitest run tests/integration/committees.test.js
 ```
 
 Expected: PASS, **16 tests**. The three 403 cases and "ACTUALLY ATTACHES" are the ones that matter.
 
-- [ ] **Step 3: Prove the suite leaves no residue**
+- [ ] **Step 4: Prove the suite leaves no residue**
+
+Capture the counts, run, capture again — a single after-reading has nothing to
+compare against:
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-cms && \
-  sqlite3 .tmp/data.db "SELECT COUNT(*) FROM up_users WHERE email LIKE 'cm-%@areaa.test' OR email LIKE 'cmte-admin-%';" && \
-  sqlite3 .tmp/data.db "SELECT COUNT(DISTINCT document_id) FROM committees;"
+  sqlite3 .tmp/data.db "SELECT (SELECT COUNT(*) FROM up_users) u, (SELECT COUNT(DISTINCT document_id) FROM committees) c;" && \
+  PATH="/opt/homebrew/bin:$PATH" npx vitest run tests/integration/committees.test.js > /dev/null && \
+  sqlite3 .tmp/data.db "SELECT (SELECT COUNT(*) FROM up_users) u, (SELECT COUNT(DISTINCT document_id) FROM committees) c;"
 ```
 
-Expected: `0`, then whatever the count was before the run. A leaked fixture user does not change the test count, so the suite stays green while the member directory fills up — this query is the only thing that catches it.
+Expected: **the two rows are identical.** A leaked fixture user does not change any test count, so this is the only thing that catches it.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-cms && \
@@ -1330,7 +1408,17 @@ beforeAll(async () => {
     email: `res-admin-${RUN}@areaa.test`, chapterIds: [chapterA.id],
   });
   tokenA = await jwtFor(strapi, adminA.id);
-  originalChapterName = chapterA.name;
+
+  // draftChapters() asks for fields:['slug'], and `fields` unions in only `id`
+  // and `documentId` — so chapterA.name is UNDEFINED. v2 read it from there and
+  // wrote "undefined <RUN>" to a real chapter, then skipped the restore because
+  // the afterAll guard was falsy. Fetch it explicitly and fail loudly.
+  const full = await strapi.documents('api::chapter.chapter')
+    .findOne({ documentId: chapterA.documentId, fields: ['name'], status: 'draft' });
+  originalChapterName = full?.name;
+  if (!originalChapterName) {
+    throw new Error('fixture setup failed: could not read the chapter name to restore later');
+  }
 });
 
 afterAll(async () => {
@@ -1414,7 +1502,9 @@ describe('news', () => {
     const stored = await strapi.documents('api::news-item.news-item')
       .findOne({ documentId: created.body.data.documentId, status: 'draft' });
     expect(stored.excerpt).toBe('Just the excerpt');
-    expect(stored.body).not.toBeNull();
+    // not.toBeNull() would also pass for [] — i.e. for the exact failure this
+    // reads as guarding ("the partial update wiped the body").
+    expect(stored.body).toEqual(BODY);
   });
 
   it('400s when an update BLANKS the required body', async () => {
@@ -1433,6 +1523,22 @@ describe('news', () => {
     const gone = await strapi.documents('api::news-item.news-item')
       .findOne({ documentId: created.body.data.documentId, status: 'draft' });
     expect(gone).toBeNull();
+  });
+
+  it('lists this chapter and populates figure and author for the UI', async () => {
+    // The 13th granted action, and the only one otherwise unexercised. news's
+    // listPopulate names figure+author for the same reason plan 2 added it for
+    // events: a media relation is absent unless populated, and the edit screen
+    // silently shows nothing.
+    const created = await auth(api().post('/api/chapter-admin/news'))
+      .send({ title: title('Listed'), chapterSlug: chapterA.slug, body: BODY });
+
+    const res = await auth(api().get('/api/chapter-admin/news?pageSize=100'));
+    expect(res.status).toBe(200);
+    const row = res.body.data.find((n) => n.documentId === created.body.data.documentId);
+    expect(row).toBeDefined();
+    expect(row.chapter?.slug).toBe(chapterA.slug);   // the pages filter on this
+    expect(row.author).toBeTruthy();
   });
 
   it("refuses another chapter's news", async () => {
@@ -1469,10 +1575,18 @@ describe('chapter settings', () => {
     expect(stored.name).toBe(next);   // afterAll restores it
   });
 
-  it('accepts clearing the contact email', async () => {
+  it('actually clears the contact email', async () => {
+    // Asserting only the status would pass even if `email` were dropped from
+    // updateChapter's whitelist.
+    await auth(api().put('/api/chapter-admin/chapter'))
+      .send({ chapterSlug: chapterA.slug, name: originalChapterName, email: 'x@areaa.test' });
     const res = await auth(api().put('/api/chapter-admin/chapter'))
       .send({ chapterSlug: chapterA.slug, name: originalChapterName, email: '' });
+
     expect(res.status).toBe(200);
+    const stored = await strapi.documents('api::chapter.chapter')
+      .findOne({ documentId: chapterA.documentId, fields: ['email'], status: 'draft' });
+    expect(stored.email ?? '').toBe('');
   });
 
   it('cannot change the slug, even when the payload says so', async () => {
@@ -1552,7 +1666,7 @@ cd /Users/nk/Projects/AREAA/areaa-cms && pkill -f "strapi develop" ; \
   PATH="/opt/homebrew/bin:$PATH" npm test
 ```
 
-Expected: **PASS, 120 tests across 12 files** — 59 from plans 1–2, plus 8 factory-hooks, 17 members, 3 grants, 16 committees, 17 here.
+Expected: **PASS, 121 tests across 12 files** — 59 from plans 1–2, plus 8 factory-hooks, 17 members, 3 grants, 16 committees, 18 here.
 
 - [ ] **Step 3: Run it again and prove nothing accumulated**
 
@@ -1612,7 +1726,7 @@ export default getViteConfig({
 cd /Users/nk/Projects/AREAA/areaa-frontend && npm test
 ```
 
-Expected: **24 passed** — the three plan-2 files, unchanged. If this drops or errors, the config wrapper is wrong; fix it before adding tests that depend on it.
+Expected: **24 passed** — the three plan-2 files, unchanged. The wrapper also prints an `ExperimentalWarning` about CJS loading an ES module, an `[@astrojs/node] Enabling sessions` line, and a markdown-deprecation notice on each container render. All are harmless; do not treat them as the failure this step is checking for. If this drops or errors, the config wrapper is wrong; fix it before adding tests that depend on it.
 
 - [ ] **Step 3: Commit**
 
@@ -2073,6 +2187,15 @@ describe("toNewsPayload", () => {
         const p = toNewsPayload(form({ title: "T", body: "x" }), { chapterSlug: null });
         expect(p).not.toHaveProperty("chapterSlug");
     });
+
+    it('sends null, not "", when the optional date is left blank', () => {
+        // publishedDate is a Strapi `date`: "" is rejected with
+        // "Invalid format, expected yyyy-MM-dd", null is accepted. The form
+        // always renders the field, so this is every article saved without one.
+        const p = toNewsPayload(form({ title: "T", body: "x", publishedDate: "" }),
+            { chapterSlug: "b" });
+        expect(p.publishedDate).toBeNull();
+    });
 });
 ```
 
@@ -2095,7 +2218,8 @@ export interface NewsPayload {
     chapterSlug?: string;
     body?: StrapiBlock[];
     excerpt?: string;
-    publishedDate?: string;
+    /** `null` clears it. NEVER "" — Strapi rejects that on a `date` attribute. */
+    publishedDate?: string | null;
     figure?: number;
 }
 
@@ -2130,8 +2254,14 @@ export function toNewsPayload(
     const body = str(fd, "body");
     if (body) payload.body = textToBlocks(body);
 
+    // `excerpt` is `text`, so "" is a legal value and clears the field.
     if (fd.has("excerpt")) payload.excerpt = str(fd, "excerpt");
-    if (fd.has("publishedDate")) payload.publishedDate = str(fd, "publishedDate");
+
+    // `publishedDate` is a Strapi `date`, which REJECTS "" with
+    // `Invalid format, expected yyyy-MM-dd` (400) but accepts null. The form
+    // always renders the input, so a blank one posts "" on every article
+    // created without a date — the default path, not an edge case.
+    if (fd.has("publishedDate")) payload.publishedDate = str(fd, "publishedDate") || null;
 
     if (typeof opts.figureId === "number") payload.figure = opts.figureId;
 
@@ -2146,7 +2276,7 @@ cd /Users/nk/Projects/AREAA/areaa-frontend && \
   npx vitest run tests/unit/news-form.test.ts && npm test
 ```
 
-Expected: 9 tests, then **47 across 6 files** (24 from plan 2, 6 multi-select, 8 committee, 9 news).
+Expected: 10 tests, then **48 across 6 files** (24 from plan 2, 6 multi-select, 8 committee, 10 news). `form-route.test.ts` lands in Chunk 4 and takes it to 54.
 
 - [ ] **Step 5: Commit**
 
@@ -2240,7 +2370,7 @@ export async function beginChapterAdminPost(
 
 - [ ] **Step 2: Adopt it in `event.ts`**
 
-Replace the preamble in the existing plan-2 route — everything from `const jwt =` down to the `editPath` assignment — with:
+**Replace lines 1–37** — the whole head of the file, from the first `import` down to and including the `editPath` assignment, i.e. everything above the `// --- delete ---` banner. The block below is a complete replacement for that span; splicing it into the middle of the function instead produces a syntax error.
 
 ```ts
 import type { APIRoute } from "astro";
@@ -2262,7 +2392,93 @@ export const POST: APIRoute = async (ctx) => {
 
 Leave the delete branch, validation, upload and save dispatch exactly as they are.
 
-- [ ] **Step 3: Prove events still work end to end**
+- [ ] **Step 3: Test the helper**
+
+This is the file the plan itself calls "the security-relevant part", and it is
+the one place a bug silently disables the guard on all five routes. Create
+`tests/unit/form-route.test.ts`:
+
+```ts
+import { describe, it, expect } from "vitest";
+import { beginChapterAdminPost } from "../../src/lib/form-route";
+import type { AccountMember } from "../../src/lib/account";
+
+const member = (slugs: string[]) => ({
+    administeredChapters: slugs.map((slug) => ({ name: slug, slug })),
+} as AccountMember);
+
+/** Minimal stand-in for the slice of APIContext the helper reads. */
+const ctx = (opts: { jwt?: string; user?: AccountMember; fields?: Record<string, string> }) => {
+    const fd = new FormData();
+    for (const [k, v] of Object.entries(opts.fields ?? {})) fd.set(k, v);
+    return {
+        request: new Request("http://test/api", { method: "POST", body: fd }),
+        cookies: { get: () => (opts.jwt ? { value: opts.jwt } : undefined) },
+        redirect: (path: string, status = 302) =>
+            new Response(null, { status, headers: { Location: path } }),
+        locals: { user: opts.user },
+    } as never;
+};
+
+const location = (r: Response) => r.headers.get("Location");
+
+describe("beginChapterAdminPost", () => {
+    it("bounces a request with no session cookie", async () => {
+        const r = await beginChapterAdminPost(ctx({ user: member(["boston"]) }), "events");
+        expect(r).toBeInstanceOf(Response);
+        expect(location(r as Response)).toBe("/login?next=/account/chapter");
+    });
+
+    it("bounces a request whose session did not resolve to a member", async () => {
+        const r = await beginChapterAdminPost(ctx({ jwt: "t" }), "events");
+        expect(r).toBeInstanceOf(Response);
+    });
+
+    it("rejects a missing chapterSlug", async () => {
+        const r = await beginChapterAdminPost(
+            ctx({ jwt: "t", user: member(["boston"]), fields: {} }), "events");
+        expect(location(r as Response)).toBe("/account?error=not-chapter-admin");
+    });
+
+    it("REJECTS A CHAPTER THE MEMBER DOES NOT ADMINISTER", async () => {
+        // The line that must never be lost to a copy-paste.
+        const r = await beginChapterAdminPost(
+            ctx({ jwt: "t", user: member(["boston"]), fields: { chapterSlug: "seattle" } }), "events");
+        expect(r).toBeInstanceOf(Response);
+        expect(location(r as Response)).toBe("/account?error=not-chapter-admin");
+    });
+
+    it("returns the parsed context for an administered chapter", async () => {
+        const r = await beginChapterAdminPost(
+            ctx({ jwt: "t", user: member(["boston"]), fields: { chapterSlug: "boston" } }), "committees");
+        expect(r).not.toBeInstanceOf(Response);
+        const begun = r as Exclude<typeof r, Response>;
+        expect(begun.jwt).toBe("t");
+        expect(begun.action).toBe("save");
+        expect(begun.base).toBe("/account/chapter/boston/committees");
+        expect(begun.editPath).toBe("/account/chapter/boston/committees/new");
+    });
+
+    it("points editPath at the record when documentId is present, and reads _action", async () => {
+        const r = await beginChapterAdminPost(ctx({
+            jwt: "t", user: member(["boston"]),
+            fields: { chapterSlug: "boston", documentId: "abc", _action: "delete" },
+        }), "committees");
+        const begun = r as Exclude<typeof r, Response>;
+        expect(begun.action).toBe("delete");
+        expect(begun.editPath).toBe("/account/chapter/boston/committees/abc");
+    });
+});
+```
+
+```bash
+cd /Users/nk/Projects/AREAA/areaa-frontend && npx vitest run tests/unit/form-route.test.ts
+```
+
+Expected: PASS, 6 tests. Delete the `administers` line from the helper and the
+fourth test must fail — check that once, then restore it.
+
+- [ ] **Step 4: Prove events still work end to end**
 
 This is shipped, working code; the refactor must not change behaviour. With the CMS running:
 
@@ -2270,14 +2486,14 @@ This is shipped, working code; the refactor must not change behaviour. With the 
 cd /Users/nk/Projects/AREAA/areaa-frontend && npm run check && npm test
 ```
 
-Expected: 0 errors, 47 passed. Then sign in as `chapadmin@areaa.test`, create an event, edit it, delete it. If any of those break, revert this step rather than debugging forward — the extraction is a convenience, not a requirement.
+Expected: 0 errors, 54 passed. Then sign in as `chapadmin@areaa.test`, create an event, edit it, delete it. If any of those break, revert this step rather than debugging forward — the extraction is a convenience, not a requirement.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-frontend && \
-  git add src/lib/form-route.ts src/pages/api/chapter-admin/event.ts && \
-  git commit -m "refactor: extract the chapter-admin form route preamble"
+  git add src/lib/form-route.ts tests/unit/form-route.test.ts src/pages/api/chapter-admin/event.ts && \
+  git commit -m "refactor: extract and test the chapter-admin form route preamble"
 ```
 
 ---
@@ -2288,7 +2504,7 @@ cd /Users/nk/Projects/AREAA/areaa-frontend && \
 
 - [ ] **Step 1: Add the types and calls**
 
-Note every list call takes a `chapterSlug`. v1's did not, so a multi-chapter admin saw another chapter's records on a page scoped to this one.
+Note the scoping split, because it is easy to get wrong in both directions. The **bespoke** calls (`listMembers`, `listSubmissions`) take a `chapterSlug` and are scoped server-side. The **factory-backed** ones (`listCommittees`, `listNews`) do not — the factory scopes them to every chapter the caller administers, and the pages narrow them with `.filter(x => x.chapter?.slug === chapter.slug)`. Those filters are load-bearing, not redundant: deleting them restores the cross-chapter leak. The single-record getters take a `chapterSlug` for a stronger reason — see `getCommittee`.
 
 ```ts
 export interface ChapterMember {
@@ -2353,9 +2569,22 @@ export async function listCommittees(jwt: string): Promise<AdminCommittee[] | nu
     return status === 200 && body?.data ? body.data : null;
 }
 
-export async function getCommittee(jwt: string, documentId: string): Promise<AdminCommittee | null> {
+/**
+ * Fetch one committee, scoped to a chapter.
+ *
+ * `chapterSlug` is REQUIRED and is not a convenience. Without it, a
+ * multi-chapter admin opening /account/chapter/A/committees/<B's-id> gets a
+ * form built from chapter A's members: none of B's members match, every box
+ * renders unchecked, the picker still emits its presence marker, and the save
+ * replaces B's entire roster with nothing — passing every scope check, because
+ * B *is* administered. Returning null here turns that URL into the existing
+ * `error=missing` redirect instead.
+ */
+export async function getCommittee(
+    jwt: string, documentId: string, chapterSlug: string
+): Promise<AdminCommittee | null> {
     const all = await listCommittees(jwt);
-    return all?.find((c) => c.documentId === documentId) ?? null;
+    return all?.find((c) => c.documentId === documentId && c.chapter?.slug === chapterSlug) ?? null;
 }
 
 export async function saveCommittee(
@@ -2380,10 +2609,13 @@ export async function listNews(jwt: string, { page = 1, pageSize = 25 } = {}): P
     return { ok: true, items: body.data, pagination: body.meta?.pagination ?? EMPTY_PAGINATION };
 }
 
-export async function getNewsItem(jwt: string, documentId: string): Promise<AdminNewsItem | null> {
+/** Scoped for the same reason as getCommittee — see the comment there. */
+export async function getNewsItem(
+    jwt: string, documentId: string, chapterSlug: string
+): Promise<AdminNewsItem | null> {
     const res = await listNews(jwt, { pageSize: 100 });
     if (!res.ok) return null;
-    return res.items.find((n) => n.documentId === documentId) ?? null;
+    return res.items.find((n) => n.documentId === documentId && n.chapter?.slug === chapterSlug) ?? null;
 }
 
 export async function saveNews(
@@ -2485,7 +2717,9 @@ export const POST: APIRoute = async (ctx) => {
         // 403 is either "not your chapter" or "that member isn't in your
         // chapter"; the form shows one sentence covering both.
         if (result.status === 403) return back(editPath, "error=forbidden");
-        return back(editPath, `error=save&message=${encodeURIComponent(result.message)}`);
+        // No `message` param: nothing renders it, and forwarding a message the
+        // user never sees is the same silent-failure shape this plan is about.
+        return back(editPath, "error=save");
     }
     return back(base, documentId ? "saved=1" : "created=1");
 };
@@ -2522,7 +2756,7 @@ export const POST: APIRoute = async (ctx) => {
     if (file instanceof File && file.size > 0) {
         const upload = await uploadMedia(jwt, file);
         if (!upload.ok) {
-            return back(editPath, `error=upload&message=${encodeURIComponent(upload.message)}`);
+            return back(editPath, "error=upload");
         }
         figureId = upload.id;
     }
@@ -2534,7 +2768,7 @@ export const POST: APIRoute = async (ctx) => {
 
     if (!result.ok) {
         if (result.status === 403) return back(editPath, "error=forbidden");
-        return back(editPath, `error=save&message=${encodeURIComponent(result.message)}`);
+        return back(editPath, "error=save");
     }
     return back(base, documentId ? "saved=1" : "created=1");
 };
@@ -2692,7 +2926,7 @@ const messages: Record<string, string> = {
 const errorMessage = error ? (messages[error] ?? messages.save) : null;
 ---
 
-<form class="cform" method="post" action="/api/chapter-admin/committee">
+<form class="cform" method="post" action="/api/chapter-admin/committee" novalidate>
     <input type="hidden" name="_action" value="save" />
     <input type="hidden" name="chapterSlug" value={chapterSlug} />
     {isEdit && <input type="hidden" name="documentId" value={committee!.documentId} />}
@@ -2812,8 +3046,9 @@ const all = await listCommittees(jwt);
 const failed = all === null;
 // The API scopes to every chapter the caller administers; this page is scoped
 // to one. Without the filter a multi-chapter admin sees another chapter's
-// committees here, and clicking through renders the form with THIS chapter's
-// members — so every save 403s with no way forward.
+// committees here. Reaching that edit page by URL is guarded separately, in
+// getCommittee — an earlier draft claimed such a save would 403, but with an
+// empty member selection it succeeds and silently clears the roster.
 const rows = (all ?? []).filter((c) => c.chapter?.slug === chapter.slug);
 
 const sp = Astro.url.searchParams;
@@ -2970,7 +3205,7 @@ if (!chapter) return Astro.redirect("/account?error=not-chapter-admin");
 
 const jwt = Astro.cookies.get(SESSION_COOKIE)?.value ?? "";
 const [committee, members] = await Promise.all([
-    getCommittee(jwt, documentId!),
+    getCommittee(jwt, documentId!, chapter.slug),
     listMembers(jwt, chapter.slug),
 ]);
 
@@ -3213,7 +3448,14 @@ const formatPublished = (iso?: string) => {
         </p>
     )}
 
-    {!failed && items.length === 0 && (
+    {/*
+      Gated on the UNFILTERED total, not items.length. Pagination happens
+      server-side across every administered chapter and the filter runs after,
+      so a multi-chapter admin can land on a page whose slice holds none of this
+      chapter's articles — "no articles yet" would be a lie. See Known
+      limitations.
+    */}
+    {!failed && pagination.total === 0 && (
         <p class="nlist__empty">No articles yet. <a href={`${base}/new`}>Write the first one.</a></p>
     )}
 
@@ -3341,7 +3583,7 @@ const chapter = member.administeredChapters.find((c) => c.slug === chapterSlug);
 if (!chapter) return Astro.redirect("/account?error=not-chapter-admin");
 
 const jwt = Astro.cookies.get(SESSION_COOKIE)?.value ?? "";
-const item = await getNewsItem(jwt, documentId!);
+const item = await getNewsItem(jwt, documentId!, chapter.slug);
 // A miss means the article does not exist OR belongs to another chapter —
 // indistinguishable here, and the same redirect is right either way.
 if (!item) return Astro.redirect(`/account/chapter/${chapter.slug}/news?error=missing`);
@@ -3653,12 +3895,12 @@ Expected: **0 errors.**
 - [ ] **Step 1: Both suites**
 
 ```bash
-pkill -f "strapi develop" ; \
+cd /Users/nk/Projects/AREAA/areaa-cms && pkill -f "strapi develop" ; \
   PATH="/opt/homebrew/bin:$PATH" npm test
 cd /Users/nk/Projects/AREAA/areaa-frontend && npm test && npm run check
 ```
 
-Expected: **120 CMS**, **47 frontend**, 0 typecheck errors.
+Expected: **121 CMS**, **54 frontend**, 0 typecheck errors.
 
 - [ ] **Step 2: Seed one submission, since nothing writes them**
 
@@ -3733,8 +3975,8 @@ FOREIGN=$(sqlite3 .tmp/data.db "SELECT u.document_id FROM up_users u \
   JOIN chapters c ON c.id = l.chapter_id \
   WHERE c.slug != 'aloha-hawaii' LIMIT 1;") && \
 echo "foreign member: $FOREIGN" && \
-echo "--- foreign member on a committee (expect 403) ---" && \
-curl -s -o /dev/null -w "%{http_code}\n" -X POST http://localhost:1337/api/chapter-admin/committees \
+echo "--- foreign member on a committee (expect 403 AND 'do not belong') ---" && \
+curl -s -w "\nHTTP %{http_code}\n" -X POST http://localhost:1337/api/chapter-admin/committees \
   -H "Authorization: Bearer $JWT" -H "Content-Type: application/json" \
   -d "{\"name\":\"Attack\",\"chapterSlug\":\"aloha-hawaii\",\"members\":[\"$FOREIGN\"]}" && \
 echo "--- malformed members (expect 400) ---" && \
@@ -3808,7 +4050,7 @@ cd /Users/nk/Projects/AREAA/areaa-cms && \
 
 ## Done when
 
-- **120 CMS tests and 47 frontend tests green**, CMS twice in a row with **no row-count growth** (committees, news_items, form_submissions and **up_users** all unchanged).
+- **121 CMS tests and 54 frontend tests green**, CMS twice in a row with **no row-count growth** (committees, news_items, form_submissions and **up_users** all unchanged).
 - A chapter admin can create, edit and delete committees, and change who sits on them — **including unchecking everyone** — with JavaScript disabled.
 - A committee write naming a member of another chapter returns **403 "do not belong"**; a malformed `members` payload returns **400**, not 500.
 - Editing only a committee's name leaves its membership untouched.
@@ -3816,7 +4058,7 @@ cd /Users/nk/Projects/AREAA/areaa-cms && \
 - A published date renders as the day that was typed, in any timezone.
 - Chapter name and email save; the slug is read-only and unchangeable through the API.
 - Submissions list scoped to **the chapter in the URL**, and toggle handled both ways.
-- Every failed write renders a message. No `?error=` code is emitted that its destination page cannot display.
+- Every `?error=` code emitted by the four chapter-admin routes is rendered by its destination page. **Scoped deliberately:** `beginChapterAdminPost` also emits `/account?error=not-chapter-admin`, and `/account/index.astro` renders nothing for it — that is pre-existing (plan 2's middleware emits it too) and is listed under Known limitations rather than claimed as fixed.
 - `tests/unit/grants.test.js` passes, and fails when any grant string is misspelled.
 
 ## Not in this plan
@@ -3836,4 +4078,8 @@ cd /Users/nk/Projects/AREAA/areaa-cms && \
 - **Committee membership is not re-validated on read.** If national moves a member to another chapter, that member stays on the committee until someone re-saves it.
 - **The member picker lists every member with no search.** Fine at current chapter sizes; a chapter with several hundred members will want filtering.
 - **No CSRF token.** Astro's native `checkOrigin` covers these POSTs, the same as every other form on the site.
-- **`publishedDate` is a free-text field** rather than a date picker, because `FormField` has no `date` type. A malformed value is rejected by Strapi with a generic message.
+- **`publishedDate` is a free-text field** rather than a date picker, because `FormField` has no `date` type. A malformed value is rejected by Strapi with a generic message. A blank one is sent as `null`, which is why it can be cleared.
+- **The news list paginates against unfiltered totals.** `listNews` returns a page spanning every administered chapter and the page filters afterwards, so a multi-chapter admin can see a page count that overstates their chapter and land on a page rendering zero rows. The empty state is gated on `pagination.total` so it never lies outright. Fixed properly by giving the factory `list` an optional `chapterSlug`, which is plan 4 work.
+- **`/account` does not render `error=not-chapter-admin`.** Five routes and ten page guards emit it and the landing page shows nothing, so a bounced member sees their dashboard with no explanation. Pre-existing from plan 2; a six-line `errorMessages` block on `account/index.astro` closes it.
+- **`listMembers` requires `confirmed: true`; `assertMembersInChapter` does not.** The picker will not offer an unconfirmed member, but a hand-crafted request may still attach one. Deliberate — the write path checks chapter membership, which is the security question — but stated so it does not get "fixed" in only one direction.
+- **`form-submission.chapter` is optional in the schema.** A chapter-less submission is invisible to `listSubmissions` and 403s on update. Fails closed.
