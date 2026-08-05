@@ -123,6 +123,7 @@ Checked against the installed Strapi 5.45.1 by executing the calls.
 | `src/api/chapter-admin/services/members.js` | `toDirectoryRow`, `normaliseMemberIds`, `assertMembersInChapter` |
 | `tests/unit/members.test.js` | Row shaping, id normalisation, the membership check |
 | `tests/unit/factory-hooks.test.js` | The three new factory hooks, against a fake strapi |
+| `src/api/chapter-admin/grants.js` | The grant list, out of `src/index.js` so a test can read it |
 | `tests/unit/grants.test.js` | Grant strings vs controller exports — replaces v1's inert count check |
 | `tests/integration/committees.test.js` | Committee CRUD + the cross-chapter member attack |
 | `tests/integration/resources.test.js` | News, chapter settings, submissions |
@@ -755,7 +756,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const controller = require('../../src/api/chapter-admin/controllers/chapter-admin.js');
 const routes = require('../../src/api/chapter-admin/routes/chapter-admin.js');
-const { CHAPTER_ADMIN_GRANTS } = require('../../src/index.js');
+const { CHAPTER_ADMIN_GRANTS } = require('../../src/api/chapter-admin/grants.js');
 
 const PREFIX = 'api::chapter-admin.chapter-admin.';
 
@@ -783,20 +784,26 @@ describe('chapter-admin wiring', () => {
 });
 ```
 
-- [ ] **Step 2: Export the grants from `src/index.js`**
+- [ ] **Step 2: Move the grants into their own module**
 
-Add `CHAPTER_ADMIN_GRANTS` to the module exports alongside the lifecycle functions so the test can read it without booting:
+**Do NOT export them from `src/index.js`.** Strapi validates that file's shape
+and permits only `register`/`bootstrap`/`destroy`; anything else fails the boot
+with `Invalid file ./src/index.js: this field has unspecified keys`. Requiring
+the file from a test works fine, so this is invisible until Strapi loads it.
+
+Create `src/api/chapter-admin/grants.js` holding both `AUTHENTICATED_GRANTS` and
+`CHAPTER_ADMIN_GRANTS` (move them verbatim out of `src/index.js`, keeping their
+comments), then have `src/index.js` require them:
 
 ```js
-module.exports = {
-  register(/* { strapi } */) {},
-  async bootstrap({ strapi }) { /* … unchanged … */ },
-  // Exported for tests/unit/grants.test.js — a misspelled grant is otherwise
-  // undetectable, because syncPermissions deletes unknown actions during plugin
-  // bootstrap and the grant loop re-creates them on the next line.
-  CHAPTER_ADMIN_GRANTS,
-};
+const {
+  AUTHENTICATED_GRANTS, CHAPTER_ADMIN_GRANTS,
+} = require('./api/chapter-admin/grants');
 ```
+
+Strapi's API loader reads only `controllers/`, `routes/`, `services/` and
+friends, so a plain module at the API root is ignored — verified by booting.
+`grants.test.js` requires it directly.
 
 - [ ] **Step 3: Confirm it fails right now**
 
