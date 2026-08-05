@@ -22,10 +22,26 @@ const MAX_PAGE_SIZE = 100;
  *                                  returned unless named here — an authoring UI
  *                                  that renders "current image" needs `figure`,
  *                                  and without it silently shows nothing.
+ * @param {string[]} requiredFields fields that must be non-empty. Checked on
+ *                                  create, and on update for fields the payload
+ *                                  actually carries — an edit form posts every
+ *                                  field, so clearing a required one arrives as
+ *                                  '' and must be rejected, not written.
+ * @param {Function} deriveOnCreate (ctx) => object, merged into the create
+ *                                  payload AFTER the whitelist. This is how a
+ *                                  server-owned field like `news.author` is set
+ *                                  without ever being client-writable.
+ * @param {Function} validateData   async (data, { ctx, chapterDocumentId, strapi })
+ *                                  => void. Runs on create AND update. May throw
+ *                                  ScopeError (=> 403) or BadInputError (=> 400).
+ *                                  MAY ALSO NORMALISE `data` in place — the
+ *                                  committee hook rewrites `members` to longhand
+ *                                  relation form once it has checked them.
  * @param {object}   strapiInstance injected for testability
  */
 function chapterScopedResource({
   uid, editableFields, hasSlug = false, listFields = null, listPopulate = null,
+  requiredFields = [], deriveOnCreate = null, validateData = null,
   strapiInstance = null,
 }) {
   if (editableFields.includes('chapter') || editableFields.includes('slug')) {
@@ -54,6 +70,27 @@ function chapterScopedResource({
       status: 'draft',
     });
     return rows.map((r) => r.slug).filter(Boolean);
+  }
+
+  const isEmpty = (value) =>
+    value === undefined || value === null || value === '' ||
+    (Array.isArray(value) && value.length === 0);
+
+  /** On create, every requiredField must be present and non-empty. */
+  function missingOnCreate(data) {
+    return requiredFields.find((field) => isEmpty(data[field])) ?? null;
+  }
+
+  /**
+   * On update, only fields the payload actually CARRIES are checked.
+   *
+   * Absent means unchanged — but the edit forms post every field, so an admin
+   * who clears the title sends `title: ''`, which pickWhitelisted trims and
+   * forwards, blanking a required attribute. Absent is fine; present-and-empty
+   * is not.
+   */
+  function blankedOnUpdate(data) {
+    return requiredFields.find((field) => field in data && isEmpty(data[field])) ?? null;
   }
 
   return {
@@ -112,6 +149,16 @@ function chapterScopedResource({
       // documentId beginning with a digit could be misread as an entry id.
       data.chapter = { documentId: chapter.documentId };
 
+      // Derived AFTER the whitelist, so a client-supplied value cannot win.
+      if (deriveOnCreate) Object.assign(data, deriveOnCreate(ctx));
+
+      const missing = missingOnCreate(data);
+      if (missing) return ctx.badRequest(`${missing} is required`);
+
+      if (validateData) {
+        await validateData(data, { ctx, chapterDocumentId: chapter.documentId, strapi: s() });
+      }
+
       if (hasSlug) {
         let desired;
         try {
@@ -142,6 +189,13 @@ function chapterScopedResource({
 
       const input = ctx.request.body?.data ?? ctx.request.body ?? {};
       const data = pickWhitelisted(input, editableFields);
+
+      const blanked = blankedOnUpdate(data);
+      if (blanked) return ctx.badRequest(`${blanked} is required`);
+
+      if (validateData) {
+        await validateData(data, { ctx, chapterDocumentId, strapi: s() });
+      }
 
       ctx.body = { data: await docs().update({ documentId, data, status: 'published' }) };
     },

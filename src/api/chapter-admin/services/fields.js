@@ -19,4 +19,19 @@ function pickWhitelisted(input, allowedFields) {
   return out;
 }
 
-module.exports = { pickWhitelisted };
+/**
+ * A client-input problem that should surface as 400, not 500.
+ *
+ * Exists because `validateData` hooks need to reject malformed payloads —
+ * `members: 'x'` instead of `members: ['x']` — and the only 400-shaped error
+ * available was SlugError, which is about slugs. The controller's `guarded`
+ * wrapper maps this to ctx.badRequest.
+ */
+class BadInputError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'BadInputError';
+  }
+}
+
+module.exports = { pickWhitelisted, BadInputError };
