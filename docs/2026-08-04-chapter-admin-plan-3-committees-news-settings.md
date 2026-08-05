@@ -2615,7 +2615,7 @@ Expected: **0 errors.**
 
 ---
 
-## Chunk 5: The screens
+## Chunk 5: Committee screens
 
 ### Task 14: Add the nav entries
 
@@ -3010,6 +3010,8 @@ cd /Users/nk/Projects/AREAA/areaa-frontend && npm run check && \
 Expected: **0 errors.**
 
 ---
+
+## Chunk 6: News, settings and submissions screens
 
 ### Task 17: `NewsForm.astro`
 
@@ -3644,7 +3646,7 @@ Expected: **0 errors.**
 
 ---
 
-## Chunk 6: Verification
+## Chunk 7: Verification
 
 ### Task 20: Prove it end to end
 
