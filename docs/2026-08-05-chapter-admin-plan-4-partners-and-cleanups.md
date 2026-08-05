@@ -66,7 +66,7 @@ cd /Users/nk/Projects/AREAA/areaa-cms && \
 
 Any new test user **must** carry `provider: 'local'` or it cannot log in.
 
-**5. A second-chapter admin is needed this time.** Several behaviours in this plan only differ for someone administering two chapters, and `chapadmin` administers one. Task 14 creates `twochapter@areaa.test`.
+**5. A second-chapter admin is needed this time.** Several behaviours in this plan only differ for someone administering two chapters, and `chapadmin` administers one. **Task 13 Step 1** creates `twochapter@areaa.test`.
 
 ---
 
