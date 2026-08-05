@@ -2,14 +2,32 @@
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Chapter admins attach and detach the partners shown on their microsite; and the three structural debts plans 1–3 knowingly accrued are paid off before `/page` lands on top of them.
+**Goal:** Chapter admins choose which partners appear on their microsite; and the four structural debts plans 1–3 knowingly accrued are paid off before `/page` lands on top of them.
 
-**Architecture:** One new resource (`/partners`, attach/detach only — partner records are never edited) plus four cleanups the previous plans explicitly deferred: a real single-record route to retire the fetch-a-page-and-find-it hack, server-side chapter scoping on the factory lists to retire the client-side filters, a split of the frontend client, and error rendering on `/account`.
+**Architecture:** One new resource (`/partners`, attach/detach only — Partner records are never edited) plus four deferred cleanups: a real single-record route, server-side chapter scoping on the factory lists, a split of the frontend client, and error rendering on `/account`.
 
 **Tech Stack:** Strapi 5.45.1, Node 24, CommonJS, Astro 6.4.2, TypeScript strict, Vitest 3.
 
 **Spec:** [`2026-08-03-chapter-admin-authoring-design.md`](./2026-08-03-chapter-admin-authoring-design.md).
 **Predecessors:** [plan 1](./2026-08-03-chapter-admin-plan-1-authorization-spine.md), [plan 2](./2026-08-03-chapter-admin-plan-2-events-authoring-ui.md), [plan 3](./2026-08-04-chapter-admin-plan-3-committees-news-settings.md) — all complete, **122 CMS + 54 frontend tests green**.
+
+---
+
+## Revision note
+
+This is v2. v1 was reviewed by three independent readers and **none approved it**. One finding invalidated the feature outright, and is why this version's partners work looks nothing like v1's.
+
+**v1 wrote `chapter.partners`. Nothing reads it.** The microsite renders partners from the `shared.partner-group` component's *own* relation (`src/lib/content.ts:65` populates it; `adapters.ts:137` maps it). The frontend contains **zero** references to `chapter.partners`. v1 would have let an admin attach partners, save successfully, and see no change — while its walkthrough asserted the opposite.
+
+The spec contains the same contradiction: its API table says `/partners` works *"via `chapter.partners`"*, while its `/page` slot table says partner-group content comes *"via `/partners`"*. Those cannot both hold. **This plan resolves it in favour of the renderer.**
+
+Other v1 defects fixed here, each found by a reviewer running the code rather than reading it:
+
+- Two unit tests **failed against v1's own implementation** — a `findOne` spy that captured the wrong call, and a fake that 404'd before reaching the assertion under test.
+- The partners suite **destroyed sponsor ordering** on real chapters (`partner_ord` is a real column; the `afterAll` wrote back a `.sort()`ed list), and the row-count gate could not detect it.
+- Two tests **could not fail** for the reasons they named.
+- Tasks 8 and 9 both **committed with a red typecheck**, and `check && test` short-circuited so the test gate was never observed.
+- A fifth instance of this project's recurring arithmetic slip (`125` where `130` was correct).
 
 ---
 
@@ -21,20 +39,22 @@
 |---|---|---|
 | `GET /<resource>/:documentId` | plan 3, "the right first task of plan 4" | `getEvent`/`getCommittee`/`getNewsItem` each fetch 100 records and `.find()`. Past 100 they silently stop finding older ones |
 | Server-side chapter scoping on `list` | plan 3 | The committee and news pages filter client-side *after* server pagination, so a multi-chapter admin sees wrong page counts and empty pages |
-| Split `src/lib/chapter-admin.ts` | plan 3 | 303 lines, six resource clients. The single-record work touches every getter — this is the moment |
-| `/account` renders `error=not-chapter-admin` | plan 3 | Five routes and ten page guards emit it; the landing page shows nothing, so a bounced member sees their dashboard with no explanation |
+| Split `src/lib/chapter-admin.ts` | plan 3 | 303 lines, six resource clients. The single-record work touches every getter |
+| `/account` renders `error=not-chapter-admin` | plan 3 | Twelve page guards plus `form-route.ts` and `middleware.ts` emit it; the landing page shows nothing |
 
-**Out:** `/page` — the fixed-template microsite editor. Plan 5, deliberately alone: its dynamic-zone positional merge is the one piece of this design where a mistake corrupts 45 live microsites, and it deserves undivided review. It will land on the cleanups this plan makes.
-
+**Out:** `/page` — the fixed-template microsite editor. Plan 5, alone.
 **Out:** TipTap and the real blocks converters. Plan 6.
 
 ---
 
-## Why partners is small and `/page` is not
+## Why this does NOT drag in `/page`
 
-The spec gives partners two verbs and one rule (CA7): chapter admins **attach and detach** shared Partner records; they never edit them, because a Partner row appears on every chapter that uses it. So `/partners` is a catalogue read plus a set-write on `chapter.partners` — structurally the committee member picker again, with a global candidate list instead of a chapter-scoped one.
+Writing a component's relation sounds like it needs a dynamic-zone write, which is `/page`'s hard problem. It does not, and this was verified rather than assumed:
 
-`/page` is the opposite: eleven component instances, a replace-on-write dynamic zone, and a positional-merge rule that must preserve national's ordering and unknown component types. Bundling them would bury the risky one.
+- `strapi.db.query('shared.partner-group').update({ where: { id }, data: { partners: [...] } })` **replaces the relation cleanly and preserves `partner_ord`.** Probed on a real component and restored.
+- The **dynamic zone is never touched.** Which components a page has, and in what order, is unchanged — only a relation *inside* one component moves. There is no positional merge here.
+
+One structural fact shapes the implementation: **draft and published pages hold different component rows.** `aloha-hawaii`'s draft home page (79) carries partner-group component **34**; its published page (80) carries component **35**. Writing one leaves the other stale, so `/partners` writes **both** — published is what the public site renders, draft is what the admin panel shows.
 
 ---
 
@@ -42,14 +62,22 @@ The spec gives partners two verbs and one rule (CA7): chapter admins **attach an
 
 **1. Node 24 for anything touching the CMS repo.** Bare `node` here is v22.12.0; `/opt/homebrew/bin/node` is v24.1.0, so the `PATH=` prefix is load-bearing.
 
-**2. Two repos.** Every command block states its own `cd`, including the `sqlite3` ones.
+**2. Command-line tools.** Task 13 depends on all three; present on this machine, but a zero-context worker elsewhere needs them:
+
+| Tool | Used by |
+|---|---|
+| `sqlite3` | every DB check, and the Task 13 restore |
+| `python3` | JSON parsing in the Task 13 curls |
+| `curl` | the Task 13 attack suite |
+
+**3. Two repos.** Every command block states its own `cd`.
 
 | Repo | Path |
 |---|---|
 | CMS | `/Users/nk/Projects/AREAA/areaa-cms` |
 | Frontend | `/Users/nk/Projects/AREAA/areaa-frontend` |
 
-**3. The CMS dev server must be STOPPED for tests and boots, RUNNING for browser verification.**
+**4. The CMS dev server must be STOPPED for tests and boots, RUNNING for browser verification.**
 
 ```bash
 pkill -f "strapi develop"
@@ -57,41 +85,35 @@ cd /Users/nk/Projects/AREAA/areaa-cms && \
   PATH="/opt/homebrew/bin:$PATH" node ./node_modules/.bin/strapi develop
 ```
 
-**4. Test accounts** (present since plan 2):
-
-| Account | Password | Role |
-|---|---|---|
-| `chapadmin@areaa.test` | `Password123!` | Chapter Admin of `aloha-hawaii` |
-| `plainmember@areaa.test` | `Password123!` | Ordinary member, administers nothing |
-
-Any new test user **must** carry `provider: 'local'` or it cannot log in.
-
-**5. A second-chapter admin is needed this time.** Several behaviours in this plan only differ for someone administering two chapters, and `chapadmin` administers one. **Task 13 Step 1** creates `twochapter@areaa.test`.
+**5. Test accounts.** `chapadmin@areaa.test` and `plainmember@areaa.test` exist from plan 2 (`provider='local'`, confirmed, unblocked). Task 13 Step 1 creates `twochapter@areaa.test`. Any new user **must** carry `provider: 'local'` or it cannot log in.
 
 ---
 
 ## Verified assumptions
 
-Executed against the installed Strapi 5.45.1.
+Executed against the installed Strapi 5.45.1 and the seeded database.
 
 | Assumption | Verdict |
 |---|---|
-| `partner` has `name` (required), `logo` (media, **required**), `url`, `sponsorshipLevel` (enum) | ✅ Per schema |
-| `partner` is `draftAndPublish: true` | ✅ So it is two rows sharing a documentId — key on documentId, never entry id |
-| `chapter.partners` is manyToMany **inversedBy** `partner.chapters` — i.e. bidirectional | ✅ Unlike `committee.members`, which is unidirectional |
-| Writing `chapter.partners` with `[{documentId}]` works | ✅ Set 2, read back 2 |
-| Updating `chapter.partners` **replaces** rather than appends | ✅ 2 → 1 read back 1 |
-| `chapter.partners: []` clears it | ✅ Read back 0 |
-| Writing one chapter's partners leaves **other chapters' lists untouched** | ✅ Verified explicitly — the bidirectional relation made this worth checking, since `@strapi/database`'s "drop previous relations" cleanup is gated on bidirectionality |
+| `shared.partner-group` has its **own** `partners` relation (oneToMany → partner) | ✅ Per the component schema; 22 rows in `components_shared_partner_groups_partners_lnk` |
+| The microsite renders from **that** relation, not `chapter.partners` | ✅ `content.ts:65` populates it; zero frontend references to `chapter.partners` |
+| `db.query('shared.partner-group').update({ data: { partners } })` replaces the relation | ✅ Probed: 5 → 1 → restored to 5, `partner_ord` intact |
+| Draft and published pages hold **different** component rows | ✅ 8 distinct components across 8 pages; aloha draft→cmp34, published→cmp35 |
+| The document service finds the component id at either status | ✅ `findFirst({ populate: { components: true }, status })` returns `__component` and `id` |
+| `populate: { components: true }` does **not** populate nested relations | ✅ `partners` comes back unpopulated — request it explicitly |
+| **Not every chapter has a `home` page** | ✅ `pdx` has none. `/partners` must handle this, not assume |
+| Two partner-group components belong to **non-chapter** pages | ✅ Components 32 and 33 sit on pages 75/76 — never write those |
+| `partner` is `draftAndPublish: true`, `logo` required | ✅ Per schema |
+| `{documentId: '<one>'}` filter shorthand ≡ `$eq` ≡ `$in:[one]` | ✅ Probed on committees, events and news; a bogus id returns 0 rows, not everything |
+| No route shadowing with the five new routes registered | ✅ `router.match` resolves every literal and parameterised path correctly |
 | `/account/index.astro` renders nothing for any `error` param | ✅ Zero occurrences of the string |
 
 ### Carried forward from plan 3, still true
 
-- `fields: [...]` always unions `id` and `documentId`.
-- Nested `populate: { x: { fields: [...] } }` still returns `documentId`.
-- Strapi validates `src/index.js` and rejects any export beyond `register`/`bootstrap`/`destroy` — this is why grants live in `src/api/chapter-admin/grants.js`. **Do not move them back.**
-- The `sqlite3` CLI defaults `PRAGMA foreign_keys = 0`; any manual purge must set it ON or it leaves orphan link rows.
-- Error classes must be compared across one module system. Tests that assert `toThrow(SomeError)` load the service **and** the error through a single `createRequire`.
+- `fields: [...]` always unions `id` and `documentId`; nested `populate: { x: { fields } }` still returns `documentId`.
+- Strapi validates `src/index.js` and rejects any export beyond `register`/`bootstrap`/`destroy` — grants live in `src/api/chapter-admin/grants.js`. **Do not move them back.**
+- The `sqlite3` CLI defaults `PRAGMA foreign_keys = 0`; any manual purge must set it ON.
+- Tests asserting `toThrow(SomeError)` must load the service **and** the error through one `createRequire`.
 
 ---
 
@@ -101,27 +123,24 @@ Executed against the installed Strapi 5.45.1.
 
 | Path | Responsibility |
 |---|---|
-| `src/api/chapter-admin/services/partners.js` | `toPartnerRow`, `normalisePartnerIds` |
-| `tests/unit/partners.test.js` | Row shaping and id normalisation |
-| `tests/integration/partners.test.js` | Catalogue read, attach/detach, scope |
-| `tests/integration/single-record.test.js` | `GET /<resource>/:documentId` across all three |
+| `src/api/chapter-admin/services/partners.js` | `toPartnerRow`, `normalisePartnerIds`, `findPartnerGroups` |
+| `tests/unit/partners.test.js` | Row shaping, id normalisation |
+| `tests/integration/partners.test.js` | Catalogue, component targeting, scope |
+| `tests/integration/single-record.test.js` | `GET /<resource>/:documentId` |
 
-**CMS — modify:** `services/resource-factory.js` (adds `getOne`, optional list scoping), `controllers/chapter-admin.js`, `routes/chapter-admin.js`, `grants.js`.
+**CMS — modify:** `services/resource-factory.js`, `controllers/chapter-admin.js`, `routes/chapter-admin.js`, `grants.js`.
 
 **Frontend — create:**
 
 | Path | Responsibility |
 |---|---|
-| `src/lib/chapter-admin/client.ts` | `call`, `messageOf`, `Pagination`, `EMPTY_PAGINATION` |
-| `src/lib/chapter-admin/{events,committees,news,chapter,submissions,members,partners,media}.ts` | One module per resource |
-| `src/lib/chapter-admin/index.ts` | Re-export, so every existing import site is unchanged |
-| `src/lib/partners-form.ts` | Pure FormData → partner payload |
-| `tests/unit/partners-form.test.ts` | Payload mapping |
-| `src/components/PartnersForm.astro` | The attach/detach screen body |
-| `src/pages/api/chapter-admin/partners.ts` | Form POST |
+| `src/lib/chapter-admin/` (client + one module per resource + `index.ts`) | The split |
+| `src/lib/partners-form.ts`, `tests/unit/partners-form.test.ts` | Pure payload mapping |
+| `src/components/PartnersForm.astro`, `tests/unit/partners-form-render.test.ts` | The picker and its failure branches |
+| `src/pages/api/chapter-admin/partner.ts` | Form POST (**singular**, matching `event.ts`/`committee.ts`/`news.ts`) |
 | `src/pages/account/chapter/[chapterSlug]/partners.astro` | The screen |
 
-**Frontend — modify:** `src/layouts/ChapterAdminLayout.astro` (nav), `src/pages/account/index.astro` (error rendering), the committee and news list/edit pages (drop the client-side filters), `src/lib/chapter-admin.ts` → **deleted**, replaced by the directory.
+**Frontend — modify:** `ChapterAdminLayout.astro`, `account/index.astro`, the committee/news/**events** list pages, `events/[documentId].astro`, and `src/lib/chapter-admin.ts` → **deleted**.
 
 ---
 
@@ -129,13 +148,11 @@ Executed against the installed Strapi 5.45.1.
 
 ### Task 1: Add `getOne` to the factory
 
-Three client functions currently fetch a page of up to 100 records and `.find()` the one they want. Past 100 they silently return null, which the pages render as "could not be found".
-
 **Files:** Modify `src/api/chapter-admin/services/resource-factory.js`
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `tests/unit/factory-hooks.test.js`:
+Append to `tests/unit/factory-hooks.test.js`. **The spy is gated on uid** — v1's was not, so it captured `resolveAdministeredChapters`' user lookup instead of the resource read, and failed against v1's own implementation.
 
 ```js
 describe('getOne', () => {
@@ -158,17 +175,24 @@ describe('getOne', () => {
     expect(ctx.notFound).toHaveBeenCalled();
   });
 
+  it('404s — does NOT 403 — a record with no chapter at all', async () => {
+    // `chapter` is not required on event/news/committee, and the real database
+    // holds national content with none. A 403 here would make this new read
+    // surface an existence oracle: 403 means it exists, 404 means it does not.
+    const s = fakeStrapi({ stored: { documentId: 'r-1', chapter: null } });
+    const ctx = makeCtx({}, { documentId: 'r-1' });
+    await res(s).getOne(ctx);
+    expect(ctx.notFound).toHaveBeenCalled();
+  });
+
   it('403s a record in a chapter the caller does not administer', async () => {
-    const s = fakeStrapi({ stored: { documentId: 'r-1', chapter: { documentId: 'chap-z' } } });
+    const s = fakeStrapi({ stored: { documentId: 'r-1', chapter: { documentId: 'chap-z', slug: 'seattle' } } });
     await expect(res(s).getOne(makeCtx({}, { documentId: 'r-1' })))
       .rejects.toThrow(/not administered/);
   });
 
-  it('404s a record in a DIFFERENT administered chapter when chapterSlug is given', async () => {
-    // The multi-chapter case: the caller may administer both, but this URL is
-    // scoped to one. Answering with the other chapter's record is how plan 3's
-    // roster wipe became reachable.
-    const s = fakeStrapi();               // stored record is in chap-a / boston
+  it('404s when chapterSlug names a different chapter than the record is in', async () => {
+    const s = fakeStrapi();                 // stored record is in chap-a / boston
     const ctx = makeCtx({}, { documentId: 'r-1' });
     ctx.query = { chapterSlug: 'seattle' };
     await res(s).getOne(ctx);
@@ -178,10 +202,14 @@ describe('getOne', () => {
   it('applies getOnePopulate so the edit screen gets its relations', async () => {
     const s = fakeStrapi();
     const seen = [];
-    s.documents = ((orig) => (uid) => {
+    const orig = s.documents;
+    // Gated on uid: resolveAdministeredChapters reads the USER first, so an
+    // ungated spy asserts against the wrong call.
+    s.documents = (uid) => {
       const d = orig(uid);
+      if (uid !== 'api::committee.committee') return d;
       return { ...d, findOne: async (args) => { seen.push(args); return d.findOne(args); } };
-    })(s.documents);
+    };
     await res(s, { getOnePopulate: { members: { fields: ['firstName'] } } })
       .getOne(makeCtx({}, { documentId: 'r-1' }));
     expect(seen[0].populate).toHaveProperty('members');
@@ -189,14 +217,6 @@ describe('getOne', () => {
   });
 });
 ```
-
-`fakeStrapi` needs a `stored: null` case; extend its default:
-
-```js
-function fakeStrapi({ stored = { documentId: 'r-1', chapter: CHAP } } = {}) {
-```
-
-is already correct — pass `{ stored: null }` explicitly and `findOne` returns null.
 
 - [ ] **Step 2: Run it and watch it fail**
 
@@ -209,20 +229,23 @@ Expected: FAIL — `getOne is not a function`.
 
 - [ ] **Step 3: Implement**
 
-Add `getOnePopulate = null` to the factory's destructured options, and this handler to the returned object, above `list`:
+Add `getOnePopulate = null` to the destructured options, a shared `firstStr` near the top of the file, and the handler above `list`:
+
+```js
+/** Query params can arrive as string | string[]; take the first. */
+const firstStr = (v) => (Array.isArray(v) ? v[0] : v ?? '').toString().trim();
+```
 
 ```js
     /**
      * One record by documentId, scope-checked.
      *
-     * Replaces the client-side "fetch a page and .find() it" in getEvent,
-     * getCommittee and getNewsItem, which silently stopped finding anything
-     * past the 100th record.
+     * Replaces the client-side "fetch a page and .find() it", which silently
+     * stopped finding anything past the 100th record.
      *
      * `chapterSlug` is optional but the pages always send it: a caller may
      * administer several chapters, and answering /chapter/A/…/<B's-id> with B's
-     * record is exactly how a cross-chapter edit screen became reachable. With
-     * it, a record from another chapter is a 404 rather than a usable form.
+     * record is how a cross-chapter edit screen became reachable in plan 3.
      */
     async getOne(ctx) {
       const administered = await resolveAdministeredChapters(ctx, s());
@@ -235,10 +258,14 @@ Add `getOnePopulate = null` to the factory's destructured options, and this hand
       });
       if (!record) return ctx.notFound();
 
-      assertChapterScope(administered, record.chapter?.documentId ?? null);
+      // A chapterless record (national content) is a 404, not a 403 — a 403
+      // would confirm to a caller who may not see it that the record exists.
+      if (!record.chapter) return ctx.notFound();
 
-      const wanted = String(ctx.query?.chapterSlug ?? '');
-      if (wanted && record.chapter?.slug !== wanted) return ctx.notFound();
+      assertChapterScope(administered, record.chapter.documentId);
+
+      const wanted = firstStr(ctx.query?.chapterSlug);
+      if (wanted && record.chapter.slug !== wanted) return ctx.notFound();
 
       ctx.body = { data: record };
     },
@@ -251,7 +278,7 @@ cd /Users/nk/Projects/AREAA/areaa-cms && PATH="/opt/homebrew/bin:$PATH" \
   npx vitest run tests/unit/factory-hooks.test.js
 ```
 
-Expected: PASS, 13 tests (8 existing + 5).
+Expected: PASS, **14 tests** (8 existing + 6).
 
 - [ ] **Step 5: Commit**
 
@@ -265,27 +292,37 @@ cd /Users/nk/Projects/AREAA/areaa-cms && \
 
 ### Task 2: Optional chapter scoping on `list`
 
-The committee and news pages filter to their chapter *after* the server has paginated across every administered chapter. A multi-chapter admin therefore gets a page count that overstates their chapter and can land on a page rendering none of it.
-
 **Files:** Modify `src/api/chapter-admin/services/resource-factory.js`
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `tests/unit/factory-hooks.test.js`:
+The fake needs a chapter that **exists but is not administered**, or the 403 branch is unreachable. v1's knew only `'boston'`, so `'seattle'` 404'd before `assertChapterScope` ran and the test failed.
+
+Extend `fakeStrapi`'s chapter stub:
+
+```js
+      if (uid === 'api::chapter.chapter') {
+        // CHAP is administered; OTHER exists but is not.
+        const OTHER = { id: 56, documentId: 'chap-z', slug: 'seattle' };
+        return {
+          findFirst: async ({ filters }) =>
+            [CHAP, OTHER].find((c) => c.slug === filters.slug) ?? null,
+        };
+      }
+```
+
+Then append:
 
 ```js
 describe('list scoping', () => {
-  /** Captures the filters the list handler builds. */
   const spy = () => {
     const seen = [];
     const s = fakeStrapi();
     const orig = s.documents;
     s.documents = (uid) => {
       const d = orig(uid);
-      if (uid === 'api::committee.committee') {
-        return { ...d, findMany: async (a) => { seen.push(a); return []; }, count: async () => 0 };
-      }
-      return d;
+      if (uid !== 'api::committee.committee') return d;
+      return { ...d, findMany: async (a) => { seen.push(a); return []; }, count: async () => 0 };
     };
     return { s, seen };
   };
@@ -308,11 +345,19 @@ describe('list scoping', () => {
     expect(seen[0].filters.chapter).toEqual({ documentId: 'chap-a' });
   });
 
-  it('403s a chapterSlug the caller does not administer', async () => {
+  it('403s a chapterSlug that EXISTS but is not administered', async () => {
     const { s } = spy();
     const ctx = makeCtx();
     ctx.query = { chapterSlug: 'seattle' };
     await expect(res(s).list(ctx)).rejects.toThrow(/not administered/);
+  });
+
+  it('404s a chapterSlug that does not exist at all', async () => {
+    const { s } = spy();
+    const ctx = makeCtx();
+    ctx.query = { chapterSlug: 'atlantis' };
+    await res(s).list(ctx);
+    expect(ctx.notFound).toHaveBeenCalled();
   });
 });
 ```
@@ -324,18 +369,19 @@ cd /Users/nk/Projects/AREAA/areaa-cms && PATH="/opt/homebrew/bin:$PATH" \
   npx vitest run tests/unit/factory-hooks.test.js
 ```
 
-Expected: FAIL — the second case still gets `$in`.
+Expected: FAIL — the narrowing cases still see `$in`.
 
 - [ ] **Step 3: Implement**
 
 In `list`, replace the `filters` construction:
 
 ```js
-      // Optional single-chapter narrowing. Without it the pages have to filter
-      // client-side AFTER pagination, which makes pageCount describe a larger
-      // set than the rows shown — a multi-chapter admin sees "page 2 of 3"
-      // render nothing.
-      const wanted = String(ctx.query?.chapterSlug ?? '');
+      // Optional single-chapter narrowing. Without it the pages must filter
+      // client-side AFTER pagination, so pageCount describes a larger set than
+      // the rows shown — a multi-chapter admin sees "page 2 of 3" render
+      // nothing. The bare `{documentId: 'x'}` shorthand is equivalent to $eq
+      // (verified) — no operator needed.
+      const wanted = firstStr(ctx.query?.chapterSlug);
       let scope = { documentId: { $in: administered } };
       if (wanted) {
         const chapter = await s().documents('api::chapter.chapter').findFirst({
@@ -349,7 +395,9 @@ In `list`, replace the `filters` construction:
       const filters = { chapter: scope };
 ```
 
-- [ ] **Step 4: Run it and watch it pass**
+`count()` already receives this same object, so `pageCount` cannot disagree with the rows.
+
+- [ ] **Step 4: Run it, then the whole suite**
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-cms && PATH="/opt/homebrew/bin:$PATH" \
@@ -357,7 +405,7 @@ cd /Users/nk/Projects/AREAA/areaa-cms && PATH="/opt/homebrew/bin:$PATH" \
   PATH="/opt/homebrew/bin:$PATH" npm test
 ```
 
-Expected: 16 tests in that file, then **125 overall** (122 + 3). The existing suites must be untouched — `chapterSlug` is optional and nothing sends it yet.
+Expected: **18 tests** in that file (8 + 6 + 4), then **132 overall** (122 + 10). Nothing sends `chapterSlug` yet, so the existing suites are untouched.
 
 - [ ] **Step 5: Commit**
 
@@ -373,9 +421,7 @@ cd /Users/nk/Projects/AREAA/areaa-cms && \
 
 **Files:** Modify `controllers/chapter-admin.js`, `routes/chapter-admin.js`, `grants.js`
 
-- [ ] **Step 1: Give each resource its populate and export the handlers**
-
-`events` and `news` already declare `listPopulate`; reuse the same shape for the edit screen. Add to each factory config:
+- [ ] **Step 1: Add `getOnePopulate` to each resource and export the handlers**
 
 ```js
 // events
@@ -389,8 +435,6 @@ cd /Users/nk/Projects/AREAA/areaa-cms && \
   },
 ```
 
-Then, alongside the existing exports:
-
 ```js
   getEvent: guarded(events.getOne),
   getCommittee: guarded(committees.getOne),
@@ -399,7 +443,7 @@ Then, alongside the existing exports:
 
 - [ ] **Step 2: Add the routes**
 
-**Order matters.** Strapi matches in declaration order, so a literal path must precede a parameterised one that could swallow it. There is no such collision today (`/members`, `/chapter`, `/submissions` are distinct roots), but keep the single-record routes immediately after their list route so it stays obvious:
+Verified free of shadowing with all five new routes registered — `router.match` resolves `/members`, `/chapter`, `/partners` and `/submissions` to their literal handlers.
 
 ```js
     { method: 'GET', path: '/chapter-admin/events/:documentId',      handler: 'chapter-admin.getEvent' },
@@ -408,8 +452,6 @@ Then, alongside the existing exports:
 ```
 
 - [ ] **Step 3: Grant them**
-
-In `src/api/chapter-admin/grants.js`, add to `CHAPTER_ADMIN_GRANTS`:
 
 ```js
   'api::chapter-admin.chapter-admin.getEvent',
@@ -424,7 +466,7 @@ cd /Users/nk/Projects/AREAA/areaa-cms && PATH="/opt/homebrew/bin:$PATH" \
   npx vitest run tests/unit/grants.test.js
 ```
 
-Expected: PASS, 3 tests. It diffs grants against controller exports against routes — a typo in any of the three lists fails it with a readable diff. Do **not** substitute a permission row count; that check is inert, because `syncPermissions` prunes unknown actions and the grant loop re-creates them.
+Expected: PASS, 3 tests. Do **not** substitute a permission row count — that check is inert, because `syncPermissions` prunes unknown actions and the grant loop re-creates them.
 
 - [ ] **Step 5: Boot and confirm**
 
@@ -434,7 +476,7 @@ cd /Users/nk/Projects/AREAA/areaa-cms && pkill -f "strapi develop" ; \
   sqlite3 .tmp/data.db "SELECT COUNT(*) FROM up_permissions WHERE action LIKE 'api::chapter-admin%';"
 ```
 
-Expected: `BOOTSTRAP OK`, then `21` (18 + 3).
+Expected: `BOOTSTRAP OK`, then `21`.
 
 - [ ] **Step 6: Commit**
 
@@ -465,7 +507,6 @@ beforeAll(async () => {
   strapi = await boot();
   [chapterA, chapterB] = await draftChapters(strapi, 2);
 
-  // Administers BOTH — several behaviours here only differ for that caller.
   const both = await makeChapterAdmin(strapi, {
     email: `sr-both-${RUN}@areaa.test`, chapterIds: [chapterA.id, chapterB.id],
   });
@@ -478,26 +519,30 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  for (const uid of ['api::committee.committee', 'api::news-item.news-item', 'api::event.event']) {
-    const field = uid.includes('committee') ? 'name' : 'title';
-    const junk = await strapi.documents(uid).findMany({
-      filters: { [field]: { $contains: String(RUN) } }, limit: -1, status: 'draft',
-    });
-    for (const r of junk) await strapi.documents(uid).delete({ documentId: r.documentId });
+  try {
+    for (const uid of ['api::committee.committee', 'api::news-item.news-item', 'api::event.event']) {
+      const field = uid.includes('committee') ? 'name' : 'title';
+      const junk = await strapi.documents(uid).findMany({
+        filters: { [field]: { $contains: String(RUN) } }, limit: -1, status: 'draft',
+      });
+      for (const r of junk) await strapi.documents(uid).delete({ documentId: r.documentId });
+    }
+    const users = await strapi.query('plugin::users-permissions.user')
+      .findMany({ where: { email: { $contains: String(RUN) } } });
+    for (const u of users) {
+      await strapi.query('plugin::users-permissions.user').delete({ where: { id: u.id } });
+    }
+  } finally {
+    // ALWAYS shut down. helpers.js documents that skipping it produces
+    // ERR_IPC_CHANNEL_CLOSED and a red suite that means nothing.
+    await shutdown();
   }
-  const users = await strapi.query('plugin::users-permissions.user')
-    .findMany({ where: { email: { $contains: String(RUN) } } });
-  for (const u of users) {
-    await strapi.query('plugin::users-permissions.user').delete({ where: { id: u.id } });
-  }
-  await shutdown();
 });
 
 const api = () => request(strapi.server.httpServer);
 const as = (token) => (r) => r.set('Authorization', `Bearer ${token}`);
 const tag = (n) => `${n} ${RUN}`;
 
-/** Create one of each, owned by the given chapter, via the API. */
 const seed = async (token, chapter) => {
   const auth = as(token);
   const cm = await auth(api().post('/api/chapter-admin/committees'))
@@ -523,12 +568,25 @@ describe('GET /api/chapter-admin/<resource>/:documentId', () => {
     expect(nw.status).toBe(200);
     expect(nw.body.data.author).toBeTruthy();
 
+    // v1 asserted only status here, so a missing events getOnePopulate went
+    // undetected — the figure key must be present even when null.
     const ev = await as(tokenA)(api().get(`/api/chapter-admin/events/${own.ev.documentId}`));
     expect(ev.status).toBe(200);
+    expect(ev.body.data).toHaveProperty('figure');
   });
 
   it('404s a documentId that does not exist', async () => {
     const res = await as(tokenA)(api().get('/api/chapter-admin/committees/doesnotexist000000000000'));
+    expect(res.status).toBe(404);
+  });
+
+  it('404s a chapterless record rather than confirming it exists', async () => {
+    // The seed holds national events with no chapter. A 403 would be an
+    // existence oracle on a brand-new read surface.
+    const national = await strapi.documents('api::event.event')
+      .findFirst({ filters: { chapter: { documentId: { $null: true } } }, fields: ['title'], status: 'draft' });
+    if (!national) return;   // seed changed; nothing to assert
+    const res = await as(tokenA)(api().get(`/api/chapter-admin/events/${national.documentId}`));
     expect(res.status).toBe(404);
   });
 
@@ -543,10 +601,9 @@ describe('GET /api/chapter-admin/<resource>/:documentId', () => {
   });
 
   it('404s a record from ANOTHER administered chapter when chapterSlug names this one', async () => {
-    // The multi-chapter case. Both chapters are administered, so the scope check
-    // passes — only the chapterSlug comparison stops the caller getting a form
-    // for B's record under A's URL, which is how a cross-chapter save became
-    // reachable in plan 3.
+    // The multi-chapter case: both are administered, so the scope check passes
+    // — only the chapterSlug comparison stops the caller getting a form for B's
+    // record under A's URL, which is how a cross-chapter save became reachable.
     const inB = await seed(tokenBoth, chapterB);
     const res = await as(tokenBoth)(
       api().get(`/api/chapter-admin/committees/${inB.cm.documentId}?chapterSlug=${chapterA.slug}`));
@@ -560,12 +617,13 @@ describe('GET /api/chapter-admin/<resource>/:documentId', () => {
     expect(res.status).toBe(200);
   });
 
-  it('finds a record beyond the first 100, which the old client hack could not', async () => {
-    // The whole point of this route. Rather than creating 101 fixtures, assert
-    // the mechanism: the handler does a findOne by documentId, so a record's
-    // position in any list is irrelevant. A list-and-find implementation is
-    // detectable because it would need pagination params — this one takes none.
-    const res = await as(tokenA)(api().get(`/api/chapter-admin/events/${own.ev.documentId}?page=999`));
+  it('reads by documentId, so list position is irrelevant', async () => {
+    // NOT a >100 test — it cannot be one without 101 fixtures, and v1's
+    // `?page=999` version asserted nothing a list-and-find implementation
+    // would fail. What it does prove: no pagination parameter influences the
+    // result, which a list-and-find implementation could not honour.
+    const res = await as(tokenA)(
+      api().get(`/api/chapter-admin/events/${own.ev.documentId}?page=999&pageSize=1`));
     expect(res.status).toBe(200);
     expect(res.body.data.documentId).toBe(own.ev.documentId);
   });
@@ -584,7 +642,6 @@ describe('GET /api/chapter-admin/committees?chapterSlug=', () => {
       api().get(`/api/chapter-admin/committees?pageSize=100&chapterSlug=${chapterA.slug}`));
     expect(one.body.data.length).toBeGreaterThan(0);
     expect(one.body.data.every((c) => c.chapter?.slug === chapterA.slug)).toBe(true);
-    // and the pagination now describes the narrowed set
     expect(one.body.meta.pagination.total).toBeLessThan(all.body.meta.pagination.total);
   });
 
@@ -603,7 +660,7 @@ pkill -f "strapi develop" ; \
   PATH="/opt/homebrew/bin:$PATH" npx vitest run tests/integration/single-record.test.js
 ```
 
-Expected: PASS, **8 tests**.
+Expected: PASS, **9 tests**.
 
 - [ ] **Step 3: Prove no residue**
 
@@ -630,7 +687,7 @@ cd /Users/nk/Projects/AREAA/areaa-cms && \
 
 ### Task 5: The partners service
 
-Two pure functions, mirroring `services/members.js`. Partners are a **global** catalogue, so there is no per-chapter membership check — the security question is only "may this caller write this chapter", which `resolveScopedChapter` already answers.
+Three functions. `findPartnerGroups` is where this plan's real complexity lives, and it exists because of two verified facts: draft and published pages carry **different** component rows, and each links to the **matching-status** partner rows.
 
 **Files:** Create `src/api/chapter-admin/services/partners.js`, `tests/unit/partners.test.js`
 
@@ -650,20 +707,16 @@ const { BadInputError } = require('../../src/api/chapter-admin/services/fields.j
 
 describe('toPartnerRow', () => {
   it('returns what the picker needs to render and submit', () => {
-    const row = toPartnerRow({
+    expect(toPartnerRow({
       documentId: 'p1', name: 'Chase', sponsorshipLevel: 'Gold',
       logo: { url: '/uploads/chase.png' },
-    });
-    expect(row).toEqual({
+    })).toEqual({
       documentId: 'p1', name: 'Chase', sponsorshipLevel: 'Gold', logoUrl: '/uploads/chase.png',
     });
   });
 
   it('tolerates a missing logo even though the schema requires one', () => {
-    // `logo` is required:true, but a populate that omits it or a partner
-    // created before that constraint would otherwise throw here.
-    const row = toPartnerRow({ documentId: 'p1', name: 'Chase' });
-    expect(row.logoUrl).toBe('');
+    expect(toPartnerRow({ documentId: 'p1', name: 'Chase' }).logoUrl).toBe('');
   });
 
   it('never returns undefined values', () => {
@@ -682,6 +735,10 @@ describe('normalisePartnerIds', () => {
     expect(normalisePartnerIds(['p1', 'p1'])).toEqual(['p1']);
   });
 
+  it('preserves order — partner_ord is a real column the microsite renders by', () => {
+    expect(normalisePartnerIds(['p3', 'p1', 'p2'])).toEqual(['p3', 'p1', 'p2']);
+  });
+
   it('accepts an empty list — detaching everything is legal', () => {
     expect(normalisePartnerIds([])).toEqual([]);
   });
@@ -691,8 +748,6 @@ describe('normalisePartnerIds', () => {
   });
 
   it('rejects a bare null rather than treating it as "detach all"', () => {
-    // Strapi accepts `partners: null` and silently clears the relation, so a
-    // stray null would wipe a chapter's sponsor list while 'x' correctly 400s.
     expect(() => normalisePartnerIds(null)).toThrow(BadInputError);
   });
 
@@ -729,7 +784,7 @@ const { BadInputError } = require('./fields');
  *
  * Partners are global, public-facing records — name, logo and sponsorship level
  * already appear on every microsite that uses them — so there is no PII
- * question here, unlike services/members.js. The whitelist exists for shape
+ * question here, unlike services/members.js. The whitelist is for shape
  * stability, not secrecy.
  */
 const PARTNER_FIELDS = ['documentId', 'name', 'sponsorshipLevel', 'logoUrl'];
@@ -739,14 +794,15 @@ function toPartnerRow(partner) {
     documentId: partner.documentId,
     name: partner.name ?? '',
     sponsorshipLevel: partner.sponsorshipLevel ?? '',
-    // `logo` is required:true in the schema, but a populate that omits it or a
-    // record predating the constraint must not throw here.
+    // `logo` is required:true, but a populate that omits it must not throw.
     logoUrl: partner.logo?.url ?? '',
   };
 }
 
 /**
- * Whatever the form sent -> a de-duplicated list of documentId strings.
+ * Whatever the form sent -> a de-duplicated, ORDER-PRESERVING list of ids.
+ *
+ * Order matters: `partner_ord` is a real column and the microsite renders by it.
  *
  * Identical contract to normaliseMemberIds, including the explicit null
  * rejection: Strapi treats `partners: null` as "clear", so returning [] for it
@@ -770,7 +826,45 @@ function normalisePartnerIds(raw) {
   return [...new Set(ids)];
 }
 
-module.exports = { toPartnerRow, normalisePartnerIds, PARTNER_FIELDS };
+/**
+ * Locate the `shared.partner-group` component on a chapter's home page, at BOTH
+ * statuses.
+ *
+ * Two verified facts make this necessary rather than incidental:
+ *
+ *  1. Draft and published pages carry DIFFERENT component rows. `aloha-hawaii`'s
+ *     draft page holds component 34, its published page component 35. Writing
+ *     one leaves the other stale — published is what the public site renders,
+ *     draft is what the admin panel shows.
+ *  2. Not every chapter has a home page (`pdx` has none), and a page may have
+ *     no partner-group slot. Both are ordinary states, not errors to assume away.
+ *
+ * Returns `{ groups: { draft?: id, published?: id } }` or `{ error }`.
+ */
+async function findPartnerGroups(strapiInstance, chapterSlug) {
+  const groups = {};
+  let sawPage = false;
+
+  for (const status of ['draft', 'published']) {
+    const page = await strapiInstance.documents('api::page.page').findFirst({
+      filters: { slug: 'home', chapter: { slug: chapterSlug } },
+      populate: { components: true },
+      status,
+    });
+    if (!page) continue;
+    sawPage = true;
+    const group = (page.components ?? []).find((c) => c.__component === 'shared.partner-group');
+    if (group?.id) groups[status] = group.id;
+  }
+
+  if (!sawPage) return { error: 'no-home-page' };
+  if (Object.keys(groups).length === 0) return { error: 'no-partner-group' };
+  return { groups };
+}
+
+module.exports = {
+  toPartnerRow, normalisePartnerIds, findPartnerGroups, PARTNER_FIELDS,
+};
 ```
 
 - [ ] **Step 4: Run it and watch it pass**
@@ -780,14 +874,14 @@ cd /Users/nk/Projects/AREAA/areaa-cms && PATH="/opt/homebrew/bin:$PATH" \
   npx vitest run tests/unit/partners.test.js
 ```
 
-Expected: PASS, 10 tests.
+Expected: PASS, **11 tests**.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-cms && \
   git add src/api/chapter-admin/services/partners.js tests/unit/partners.test.js && \
-  git commit -m "feat: partner row shaping and id normalisation"
+  git commit -m "feat: partner row shaping, id normalisation and partner-group lookup"
 ```
 
 ---
@@ -801,14 +895,15 @@ cd /Users/nk/Projects/AREAA/areaa-cms && \
 ```js
   // --- partners ----------------------------------------------------------
   // Partner records are SHARED and are never written here (CA7): a Partner row
-  // appears on every chapter that uses it, so editing one would change other
-  // chapters' microsites. This endpoint only reads the catalogue and writes the
-  // chapter's own `partners` relation.
+  // appears on every chapter that uses it. This endpoint reads the catalogue
+  // and writes the chapter home page's partner-group component relation —
+  // which is what the public microsite actually renders. `chapter.partners`
+  // exists but has no reader; see the plan's revision note.
   listPartners: guarded(async (ctx) => {
-    // Scope-checked even though the catalogue is global: the screen belongs to a
-    // chapter, and answering for a chapter the caller cannot administer would
-    // leak which chapters exist.
-    const { error, notFound } = await resolveScopedChapter(ctx, ctx.query.chapterSlug);
+    // Scope-checked even though the catalogue is global: the screen belongs to
+    // a chapter, and answering for one the caller cannot administer would leak
+    // which chapters exist.
+    const { chapter, error, notFound } = await resolveScopedChapter(ctx, ctx.query.chapterSlug);
     if (error) return notFound ? ctx.notFound(error) : ctx.badRequest(error);
 
     const rows = await strapi.documents('api::partner.partner').findMany({
@@ -816,10 +911,24 @@ cd /Users/nk/Projects/AREAA/areaa-cms && \
       populate: { logo: { fields: ['url'] } },
       sort: ['name:asc'],
       limit: -1,
-      status: 'draft',   // partner is draftAndPublish; draft is the stable side
+      status: 'draft',
     });
 
-    ctx.body = { data: rows.map(toPartnerRow) };
+    // The chapter's current selection, read off the DRAFT component so it
+    // matches what a subsequent save will replace.
+    const found = await findPartnerGroups(strapi, chapter.slug);
+    let attached = [];
+    if (!found.error && found.groups.draft) {
+      const cmp = await strapi.db.query('shared.partner-group').findOne({
+        where: { id: found.groups.draft }, populate: { partners: true },
+      });
+      attached = (cmp?.partners ?? []).map((p) => p.documentId);
+    }
+
+    ctx.body = {
+      data: rows.map(toPartnerRow),
+      meta: { attached, slot: found.error ?? 'ok' },
+    };
   }),
 
   updatePartners: guarded(async (ctx) => {
@@ -829,10 +938,9 @@ cd /Users/nk/Projects/AREAA/areaa-cms && \
 
     const ids = normalisePartnerIds(input.partners);   // BadInputError -> 400
 
-    // Every id must name a real partner. Unlike committee members there is no
-    // chapter-membership question — the catalogue is global — but a documentId
-    // that matches nothing would be silently dropped by Strapi, so the admin
-    // would see a partner vanish with no explanation.
+    // Every id must name a real partner. A documentId matching nothing would be
+    // silently dropped by the relation write, so the admin would watch a
+    // partner vanish with no explanation.
     if (ids.length > 0) {
       const found = await strapi.documents('api::partner.partner').findMany({
         filters: { documentId: { $in: ids } }, fields: ['name'], limit: -1, status: 'draft',
@@ -842,20 +950,43 @@ cd /Users/nk/Projects/AREAA/areaa-cms && \
       }
     }
 
-    const updated = await strapi.documents('api::chapter.chapter').update({
-      documentId: chapter.documentId,
-      data: { partners: ids.map((documentId) => ({ documentId })) },
-      status: 'published',
-    });
+    const located = await findPartnerGroups(strapi, chapter.slug);
+    if (located.error === 'no-home-page') {
+      return ctx.notFound('This chapter has no microsite page yet, so there is nowhere to show partners');
+    }
+    if (located.error === 'no-partner-group') {
+      return ctx.notFound("This chapter's page has no partners section");
+    }
 
-    ctx.body = { data: { documentId: updated.documentId, attached: ids.length } };
+    // Write BOTH component rows, resolving partner documentIds to entry ids at
+    // the MATCHING status — verified: draft components link to draft partner
+    // rows (id 61), published components to published rows (id 62). Getting
+    // this wrong links to the correct partner in the wrong publication state.
+    for (const [status, componentId] of Object.entries(located.groups)) {
+      const rows = ids.length
+        ? await strapi.documents('api::partner.partner').findMany({
+            filters: { documentId: { $in: ids } }, fields: ['name'], limit: -1, status,
+          })
+        : [];
+      const byDoc = new Map(rows.map((r) => [r.documentId, r.id]));
+      // Map in the SUBMITTED order — partner_ord follows the write order.
+      const entryIds = ids.map((d) => byDoc.get(d)).filter((v) => v !== undefined);
+
+      await strapi.db.query('shared.partner-group').update({
+        where: { id: componentId }, data: { partners: entryIds },
+      });
+    }
+
+    ctx.body = { data: { chapterSlug: chapter.slug, attached: ids.length } };
   }),
 ```
 
-Add the requires at the top:
+Add the require:
 
 ```js
-const { toPartnerRow, normalisePartnerIds } = require('../services/partners');
+const {
+  toPartnerRow, normalisePartnerIds, findPartnerGroups,
+} = require('../services/partners');
 ```
 
 - [ ] **Step 2: Add the routes and grants**
@@ -886,12 +1017,14 @@ Expected: 3 tests pass, `BOOTSTRAP OK`, then `23`.
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-cms && \
   git add src/api/chapter-admin/ && \
-  git commit -m "feat: chapter partner attach/detach routes"
+  git commit -m "feat: partner attach/detach writing the partner-group component"
 ```
 
 ---
 
 ### Task 7: Integration-test partners
+
+This suite writes **real chapters' live microsite content**. v1's version restored a `.sort()`ed list, silently reordering sponsors on a page the public sees, and its count-based gate could not detect it. Everything below captures and restores exact order.
 
 **Files:** Create `tests/integration/partners.test.js`
 
@@ -903,13 +1036,14 @@ import request from 'supertest';
 import { boot, shutdown, jwtFor, makeChapterAdmin, draftChapters } from './helpers.js';
 
 const RUN = Date.now();
-let strapi, chapterA, chapterB, tokenA, catalogue, originalA, originalB;
+let strapi, chapterA, chapterB, tokenA, catalogue, groupsA, originalA;
 
-const partnersOf = async (chapter) => {
-  const c = await strapi.documents('api::chapter.chapter').findOne({
-    documentId: chapter.documentId, populate: { partners: { fields: ['name'] } }, status: 'draft',
+/** Component partner documentIds, IN ORDER, for one status. */
+const componentPartners = async (componentId) => {
+  const cmp = await strapi.db.query('shared.partner-group').findOne({
+    where: { id: componentId }, populate: { partners: true },
   });
-  return (c?.partners ?? []).map((p) => p.documentId).sort();
+  return (cmp?.partners ?? []).map((p) => p.documentId);
 };
 
 beforeAll(async () => {
@@ -924,29 +1058,58 @@ beforeAll(async () => {
     .findMany({ fields: ['name'], limit: 3, sort: ['name:asc'], status: 'draft' });
   if (catalogue.length < 2) throw new Error('fixture setup: need at least two seeded partners');
 
-  // These are REAL chapters with real sponsor lists; capture and restore.
-  originalA = await partnersOf(chapterA);
-  originalB = await partnersOf(chapterB);
+  const { findPartnerGroups } = await import(
+    '../../src/api/chapter-admin/services/partners.js'
+  ).then((m) => m.default ?? m).catch(async () => {
+    const { createRequire } = await import('node:module');
+    return createRequire(import.meta.url)('../../src/api/chapter-admin/services/partners.js');
+  });
+  const located = await findPartnerGroups(strapi, chapterA.slug);
+  if (located.error) throw new Error(`fixture setup: ${chapterA.slug} has no partner-group slot`);
+  groupsA = located.groups;
+
+  // Capture the live microsite content, IN ORDER, at both statuses.
+  originalA = {};
+  for (const [status, id] of Object.entries(groupsA)) {
+    originalA[status] = await componentPartners(id);
+  }
 });
 
 afterAll(async () => {
-  for (const [chapter, original] of [[chapterA, originalA], [chapterB, originalB]]) {
-    await strapi.documents('api::chapter.chapter').update({
-      documentId: chapter.documentId,
-      data: { partners: original.map((documentId) => ({ documentId })) },
-      status: 'published',
-    });
+  try {
+    // Restore exactly — order included. NEVER write back a sorted list:
+    // partner_ord is real and the microsite renders by it.
+    if (groupsA && originalA) {
+      for (const [status, id] of Object.entries(groupsA)) {
+        const docIds = originalA[status] ?? [];
+        const rows = docIds.length
+          ? await strapi.documents('api::partner.partner').findMany({
+              filters: { documentId: { $in: docIds } }, fields: ['name'], limit: -1, status,
+            })
+          : [];
+        const byDoc = new Map(rows.map((r) => [r.documentId, r.id]));
+        await strapi.db.query('shared.partner-group').update({
+          where: { id },
+          data: { partners: docIds.map((d) => byDoc.get(d)).filter((v) => v !== undefined) },
+        });
+      }
+    }
+
+    const users = await strapi.query('plugin::users-permissions.user')
+      .findMany({ where: { email: { $contains: String(RUN) } } });
+    for (const u of users) {
+      await strapi.query('plugin::users-permissions.user').delete({ where: { id: u.id } });
+    }
+  } finally {
+    // Always, even if the restore throws or beforeAll failed part-way.
+    await shutdown();
   }
-  const users = await strapi.query('plugin::users-permissions.user')
-    .findMany({ where: { email: { $contains: String(RUN) } } });
-  for (const u of users) {
-    await strapi.query('plugin::users-permissions.user').delete({ where: { id: u.id } });
-  }
-  await shutdown();
 });
 
 const api = () => request(strapi.server.httpServer);
 const auth = (r) => r.set('Authorization', `Bearer ${tokenA}`);
+const attach = (partners) => auth(api().put('/api/chapter-admin/partners'))
+  .send({ chapterSlug: chapterA.slug, partners });
 
 describe('GET /api/chapter-admin/partners', () => {
   it('returns the global catalogue with what the picker renders', async () => {
@@ -959,6 +1122,12 @@ describe('GET /api/chapter-admin/partners', () => {
     }
   });
 
+  it("reports the chapter's current selection and that the slot exists", async () => {
+    const res = await auth(api().get(`/api/chapter-admin/partners?chapterSlug=${chapterA.slug}`));
+    expect(res.body.meta.slot).toBe('ok');
+    expect(Array.isArray(res.body.meta.attached)).toBe(true);
+  });
+
   it("refuses a chapter the caller does not administer", async () => {
     const res = await auth(api().get(`/api/chapter-admin/partners?chapterSlug=${chapterB.slug}`));
     expect(res.status).toBe(403);
@@ -967,43 +1136,75 @@ describe('GET /api/chapter-admin/partners', () => {
 });
 
 describe('PUT /api/chapter-admin/partners', () => {
-  it('ACTUALLY ATTACHES the selected partners', async () => {
-    const want = [catalogue[0].documentId, catalogue[1].documentId].sort();
-    const res = await auth(api().put('/api/chapter-admin/partners'))
-      .send({ chapterSlug: chapterA.slug, partners: want });
+  it('writes the partner-group component the microsite actually renders', async () => {
+    const want = [catalogue[0].documentId, catalogue[1].documentId];
+    const res = await attach(want);
 
     expect(res.status).toBe(200);
     expect(res.body.data.attached).toBe(2);
-    expect(await partnersOf(chapterA)).toEqual(want);
+    // Not chapter.partners — the component. This is the whole point of v2.
+    expect(await componentPartners(groupsA.draft)).toEqual(want);
+  });
+
+  it('writes the PUBLISHED component too, which is what the public site reads', async () => {
+    const want = [catalogue[1].documentId, catalogue[0].documentId];
+    await attach(want);
+    expect(await componentPartners(groupsA.published)).toEqual(want);
+  });
+
+  it('links each component to its OWN status\'s partner rows', async () => {
+    // Draft components link to draft partner rows, published to published.
+    // Linking both to the same row would look right in a documentId read and
+    // be wrong in the database.
+    await attach([catalogue[0].documentId]);
+    const draftRow = await strapi.db.connection('components_shared_partner_groups_partners_lnk')
+      .where('partner_group_id', groupsA.draft).first();
+    const pubRow = await strapi.db.connection('components_shared_partner_groups_partners_lnk')
+      .where('partner_group_id', groupsA.published).first();
+    expect(draftRow.partner_id).not.toBe(pubRow.partner_id);
+
+    const draftPartner = await strapi.db.connection('partners').where('id', draftRow.partner_id).first();
+    const pubPartner = await strapi.db.connection('partners').where('id', pubRow.partner_id).first();
+    expect(draftPartner.published_at).toBeNull();
+    expect(pubPartner.published_at).not.toBeNull();
+    expect(draftPartner.document_id).toBe(pubPartner.document_id);
+  });
+
+  it('PRESERVES the submitted order — partner_ord drives the rendered order', async () => {
+    await attach([catalogue[1].documentId, catalogue[0].documentId]);
+    expect(await componentPartners(groupsA.draft))
+      .toEqual([catalogue[1].documentId, catalogue[0].documentId]);
   });
 
   it('REPLACES rather than appending', async () => {
-    await auth(api().put('/api/chapter-admin/partners'))
-      .send({ chapterSlug: chapterA.slug, partners: [catalogue[0].documentId, catalogue[1].documentId] });
-    await auth(api().put('/api/chapter-admin/partners'))
-      .send({ chapterSlug: chapterA.slug, partners: [catalogue[0].documentId] });
-
-    expect(await partnersOf(chapterA)).toEqual([catalogue[0].documentId]);
+    await attach([catalogue[0].documentId, catalogue[1].documentId]);
+    await attach([catalogue[0].documentId]);
+    expect(await componentPartners(groupsA.draft)).toEqual([catalogue[0].documentId]);
   });
 
   it('detaches everything when sent an empty list', async () => {
-    await auth(api().put('/api/chapter-admin/partners'))
-      .send({ chapterSlug: chapterA.slug, partners: [] });
-    expect(await partnersOf(chapterA)).toEqual([]);
+    await attach([]);
+    expect(await componentPartners(groupsA.draft)).toEqual([]);
   });
 
-  it('leaves OTHER chapters untouched', async () => {
-    // chapter.partners is manyToMany and bidirectional, so a write from this
-    // side could plausibly disturb the inverse. It does not — assert it.
-    const before = await partnersOf(chapterB);
-    await auth(api().put('/api/chapter-admin/partners'))
-      .send({ chapterSlug: chapterA.slug, partners: [catalogue[0].documentId] });
-    expect(await partnersOf(chapterB)).toEqual(before);
+  it('never touches a component on a non-chapter page', async () => {
+    // Components 32/33 belong to national pages. A lookup that matched on
+    // component type alone would rewrite them.
+    const others = await strapi.db.connection('pages_cmps')
+      .where('component_type', 'shared.partner-group')
+      .whereNotIn('cmp_id', Object.values(groupsA)).select('cmp_id');
+    const before = {};
+    for (const { cmp_id } of others) before[cmp_id] = await componentPartners(cmp_id);
+
+    await attach([catalogue[0].documentId]);
+
+    for (const { cmp_id } of others) {
+      expect(await componentPartners(cmp_id)).toEqual(before[cmp_id]);
+    }
   });
 
   it('400s on a partner documentId that does not exist', async () => {
-    const res = await auth(api().put('/api/chapter-admin/partners'))
-      .send({ chapterSlug: chapterA.slug, partners: ['nosuchpartner000000000000'] });
+    const res = await attach(['nosuchpartner000000000000']);
     expect(res.status).toBe(400);
     expect(res.body.error?.message ?? '').toMatch(/no longer exist/i);
   });
@@ -1015,8 +1216,7 @@ describe('PUT /api/chapter-admin/partners', () => {
   });
 
   it('400s on partners:null rather than silently detaching everything', async () => {
-    const res = await auth(api().put('/api/chapter-admin/partners'))
-      .send({ chapterSlug: chapterA.slug, partners: null });
+    const res = await attach(null);
     expect(res.status).toBe(400);
   });
 
@@ -1027,20 +1227,37 @@ describe('PUT /api/chapter-admin/partners', () => {
     expect(res.body.error?.message ?? '').toMatch(/not administered/i);
   });
 
+  it('404s a chapter with no home page, rather than failing obscurely', async () => {
+    // `pdx` has none. Give the admin a real reason.
+    const noPage = await strapi.documents('api::chapter.chapter')
+      .findFirst({ filters: { slug: 'pdx' }, fields: ['slug'], status: 'draft' });
+    if (!noPage) return;   // seed changed
+    const admin = await makeChapterAdmin(strapi, {
+      email: `pt-nopage-${RUN}@areaa.test`, chapterIds: [noPage.id],
+    });
+    const token = await jwtFor(strapi, admin.id);
+    const res = await api().put('/api/chapter-admin/partners')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ chapterSlug: 'pdx', partners: [] });
+    expect(res.status).toBe(404);
+    expect(res.body.error?.message ?? '').toMatch(/no microsite page/i);
+  });
+
   it('never writes the Partner record itself', async () => {
-    // CA7: partners are shared. A name change here would rename the sponsor on
-    // every other chapter's microsite.
-    const before = await strapi.documents('api::partner.partner')
-      .findOne({ documentId: catalogue[0].documentId, fields: ['name'], status: 'draft' });
+    // CA7: partners are shared. This asserts the OUTCOME, not the mechanism —
+    // v1's version could not fail, because the payload shape it sent was
+    // stripped before the write regardless.
+    const before = await strapi.db.connection('partners')
+      .where('document_id', catalogue[0].documentId).select('id', 'name');
 
     await auth(api().put('/api/chapter-admin/partners')).send({
       chapterSlug: chapterA.slug,
       partners: [{ documentId: catalogue[0].documentId, name: 'Renamed By Chapter' }],
     });
 
-    const after = await strapi.documents('api::partner.partner')
-      .findOne({ documentId: catalogue[0].documentId, fields: ['name'], status: 'draft' });
-    expect(after.name).toBe(before.name);
+    const after = await strapi.db.connection('partners')
+      .where('document_id', catalogue[0].documentId).select('id', 'name');
+    expect(after).toEqual(before);
   });
 });
 ```
@@ -1048,28 +1265,33 @@ describe('PUT /api/chapter-admin/partners', () => {
 - [ ] **Step 2: Run them, then the whole suite**
 
 ```bash
-cd /Users/nk/Projects/AREAA/areaa-cms && pkill -f "strapi develop" ; \
+pkill -f "strapi develop" ; \
   PATH="/opt/homebrew/bin:$PATH" npx vitest run tests/integration/partners.test.js && \
   PATH="/opt/homebrew/bin:$PATH" npm test
 ```
 
-Expected: **11 tests**, then **159 across 15 files** — 122 from plans 1–3, plus 5 getOne, 3 list-scoping, 8 single-record, 10 partners unit, 11 partners integration. (Note 5+3 land inside the existing `factory-hooks.test.js`, so the file count rises by 3, not 5.)
+Expected: **16 tests**, then **168 across 15 files** — 122 from plans 1–3, plus 6 getOne, 4 list-scoping, 9 single-record, 11 partners unit, 16 partners integration. (The first two land inside the existing `factory-hooks.test.js`, so the file count rises by 3.)
 
-- [ ] **Step 3: Prove the sponsor lists were restored**
+- [ ] **Step 3: Prove the live microsite content is byte-identical**
+
+A count gate cannot see reordering. Compare the actual ordered lists:
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-cms && \
-  sqlite3 .tmp/data.db "SELECT c.slug, COUNT(l.partner_id) FROM chapters c LEFT JOIN chapters_partners_lnk l ON l.chapter_id = c.id WHERE c.published_at IS NULL GROUP BY c.slug ORDER BY c.slug;"
+  sqlite3 .tmp/data.db "SELECT partner_group_id, group_concat(partner_id, ',') FROM (SELECT * FROM components_shared_partner_groups_partners_lnk ORDER BY partner_group_id, partner_ord) GROUP BY partner_group_id;" > /tmp/pg-before.txt && \
+  PATH="/opt/homebrew/bin:$PATH" npx vitest run tests/integration/partners.test.js > /dev/null && \
+  sqlite3 .tmp/data.db "SELECT partner_group_id, group_concat(partner_id, ',') FROM (SELECT * FROM components_shared_partner_groups_partners_lnk ORDER BY partner_group_id, partner_ord) GROUP BY partner_group_id;" > /tmp/pg-after.txt && \
+  diff /tmp/pg-before.txt /tmp/pg-after.txt && echo "IDENTICAL — order preserved" || echo "MICROSITE CONTENT CHANGED — fix the restore before continuing"
 ```
 
-Expected: the same counts as before the run. These are real chapters with real sponsors — the suite must put them back.
+Expected: `IDENTICAL — order preserved`.
 
 - [ ] **Step 4: Commit**
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-cms && \
   git add tests/integration/partners.test.js && \
-  git commit -m "test: partner catalogue, attach/detach and the shared-record invariant"
+  git commit -m "test: partner catalogue, component targeting and the shared-record invariant"
 ```
 
 ---
@@ -1078,107 +1300,37 @@ cd /Users/nk/Projects/AREAA/areaa-cms && \
 
 ### Task 8: `src/lib/chapter-admin.ts` becomes a directory
 
-303 lines holding transport, error shaping and six resource clients. This chunk's single-record work touches every getter, so the split happens now rather than after.
+303 lines holding transport, error shaping and six resource clients. This plan's single-record work touches every getter, so the split happens now.
 
-**The rule: no import site changes.** Every existing `from "../../lib/chapter-admin"` keeps working, because `index.ts` re-exports everything. If a page needs editing, the split is wrong.
+**The rule: no import site changes.** Every existing `from "../../lib/chapter-admin"` keeps working via `index.ts`. This was verified empirically — the split typechecks at 0 errors with all 17 imported symbols resolving.
 
-**Files:** Create `src/lib/chapter-admin/`; delete `src/lib/chapter-admin.ts`
+**Files:** Create `src/lib/chapter-admin/`; delete `src/lib/chapter-admin.ts`; modify `events/[documentId].astro`
 
-- [ ] **Step 1: Create `client.ts` — the shared transport**
+- [ ] **Step 1: Create `client.ts`**
 
-Move `STRAPI_URL`, `call`, `messageOf`, `Pagination`, `EMPTY_PAGINATION` verbatim, exporting all of them:
-
-```ts
-// Shared transport for the /api/chapter-admin/* clients.
-// Server-only: every call carries the member's session JWT, which never reaches
-// the browser.
-const env = import.meta.env as Record<string, string | undefined>;
-const STRAPI_URL =
-    process.env.STRAPI_URL || env.STRAPI_URL || "http://localhost:1337";
-
-export interface Pagination {
-    page: number;
-    pageSize: number;
-    pageCount: number;
-    total: number;
-}
-
-export const EMPTY_PAGINATION: Pagination = { page: 1, pageSize: 25, pageCount: 1, total: 0 };
-
-export async function call(
-    jwt: string,
-    path: string,
-    init: RequestInit = {}
-): Promise<{ status: number; body: any }> {
-    try {
-        const res = await fetch(`${STRAPI_URL}/api/chapter-admin${path}`, {
-            ...init,
-            headers: {
-                Authorization: `Bearer ${jwt}`,
-                ...(init.body && !(init.body instanceof FormData)
-                    ? { "Content-Type": "application/json" }
-                    : {}),
-                ...(init.headers ?? {}),
-            },
-        });
-        const body = await res.json().catch(() => null);
-        return { status: res.status, body };
-    } catch {
-        return { status: 0, body: null }; // transport failure
-    }
-}
-
-/** Strapi error bodies are `{ error: { message } }`; fall back to the status. */
-export function messageOf(body: any, status: number): string {
-    return body?.error?.message || `Request failed (${status})`;
-}
-```
+Move `STRAPI_URL`, `call`, `messageOf`, `Pagination`, `EMPTY_PAGINATION` verbatim, exporting all of them.
 
 - [ ] **Step 2: One module per resource**
 
-Move each group verbatim into `events.ts`, `committees.ts`, `news.ts`, `chapter.ts`, `submissions.ts`, `members.ts`, `media.ts`, each importing what it needs from `./client`. Keep every interface with its resource (`AdminEvent` in `events.ts`, and so on).
+Move each group verbatim into `events.ts`, `committees.ts`, `news.ts`, `chapter.ts`, `submissions.ts`, `members.ts`, `media.ts`, each importing from `./client`. Keep every interface with its resource.
 
-**Two changes while moving**, both retiring the fetch-and-find hack:
-
-```ts
-// committees.ts
-export async function getCommittee(
-    jwt: string, documentId: string, chapterSlug: string
-): Promise<AdminCommittee | null> {
-    // Was: fetch a page of 100 and .find() it, which silently stopped working
-    // past the 100th committee. The route scope-checks and 404s a record from
-    // another chapter, so the chapterSlug check is now server-side.
-    const { status, body } = await call(
-        jwt, `/committees/${documentId}?chapterSlug=${encodeURIComponent(chapterSlug)}`);
-    return status === 200 && body?.data ? body.data : null;
-}
-```
+Three getters change, retiring the fetch-and-find hack:
 
 ```ts
-// news.ts — identical shape
-export async function getNewsItem(
-    jwt: string, documentId: string, chapterSlug: string
-): Promise<AdminNewsItem | null> {
-    const { status, body } = await call(
-        jwt, `/news/${documentId}?chapterSlug=${encodeURIComponent(chapterSlug)}`);
-    return status === 200 && body?.data ? body.data : null;
-}
-```
-
-```ts
-// events.ts — gains the chapterSlug the others already had
+// events.ts / committees.ts / news.ts — same shape in each
 export async function getEvent(
     jwt: string, documentId: string, chapterSlug: string
 ): Promise<AdminEvent | null> {
+    // Was: fetch a page of 100 and .find() it, which silently stopped working
+    // past the 100th record. The route scope-checks and 404s a record from
+    // another chapter, so that check is now server-side.
     const { status, body } = await call(
         jwt, `/events/${documentId}?chapterSlug=${encodeURIComponent(chapterSlug)}`);
     return status === 200 && body?.data ? body.data : null;
 }
 ```
 
-`getEvent` gaining a required third argument is a **breaking change to one call site** — `events/[documentId].astro`, updated in Task 10.
-
-Also give the two factory-backed list calls the optional slug:
+And the two factory-backed lists gain the optional slug:
 
 ```ts
 export async function listCommittees(
@@ -1197,9 +1349,18 @@ export async function listNews(
     if (status !== 200 || !body?.data) return { ok: false, status };
     return { ok: true, items: body.data, pagination: body.meta?.pagination ?? EMPTY_PAGINATION };
 }
+
+export async function listEvents(
+    jwt: string, { page = 1, pageSize = 25, chapterSlug = "" } = {}
+): Promise<ListResult> {
+    const q = chapterSlug ? `&chapterSlug=${encodeURIComponent(chapterSlug)}` : "";
+    const { status, body } = await call(jwt, `/events?page=${page}&pageSize=${pageSize}${q}`);
+    if (status !== 200 || !body?.data) return { ok: false, status };
+    return { ok: true, events: body.data, pagination: body.meta?.pagination ?? EMPTY_PAGINATION };
+}
 ```
 
-- [ ] **Step 3: `partners.ts` — the new resource**
+- [ ] **Step 3: `partners.ts`**
 
 ```ts
 import { call } from "./client";
@@ -1211,22 +1372,30 @@ export interface AdminPartner {
     logoUrl: string;
 }
 
-/** The global catalogue. null on failure, never a soft []. */
-export async function listPartners(
-    jwt: string, chapterSlug: string
-): Promise<AdminPartner[] | null> {
-    const { status, body } = await call(
-        jwt, `/partners?chapterSlug=${encodeURIComponent(chapterSlug)}`);
-    return status === 200 && Array.isArray(body?.data) ? body.data : null;
+export interface PartnerCatalogue {
+    partners: AdminPartner[];
+    /** documentIds currently on the chapter's partner-group slot. */
+    attached: string[];
+    /** 'ok' | 'no-home-page' | 'no-partner-group' */
+    slot: string;
 }
 
-/** The chapter's current selection, read off the chapter record. */
-export async function listAttachedPartners(
+/**
+ * Catalogue AND current selection in one call.
+ *
+ * Returns null on failure, never a soft empty — a soft `[]` for `attached`
+ * renders every checkbox unchecked, and combined with the picker's presence
+ * marker a save would then detach every sponsor.
+ */
+export async function listPartners(
     jwt: string, chapterSlug: string
-): Promise<string[] | null> {
+): Promise<PartnerCatalogue | null> {
     const { status, body } = await call(
-        jwt, `/chapter?chapterSlug=${encodeURIComponent(chapterSlug)}&include=partners`);
-    return status === 200 && body?.data ? (body.data.partners ?? []) : null;
+        jwt, `/partners?chapterSlug=${encodeURIComponent(chapterSlug)}`);
+    if (status !== 200 || !Array.isArray(body?.data) || !Array.isArray(body?.meta?.attached)) {
+        return null;
+    }
+    return { partners: body.data, attached: body.meta.attached, slot: body.meta.slot ?? "ok" };
 }
 
 export async function savePartners(
@@ -1239,27 +1408,7 @@ export async function savePartners(
 }
 ```
 
-**`listAttachedPartners` needs a server change**: `getChapter` currently hand-builds `{documentId, name, slug, email}` and does not populate `partners`. Add it, gated so the default response is unchanged:
-
-```js
-  // in getChapter, after the scope check
-  const body = { documentId: chapter.documentId, name: chapter.name,
-    slug: chapter.slug, email: chapter.email ?? '' };
-
-  // `administrators` must never ship — chapter admins must not see or appoint
-  // each other. `partners` is opt-in so the settings screen's payload does not
-  // grow a relation it has no use for.
-  if (String(ctx.query.include ?? '') === 'partners') {
-    const withPartners = await strapi.documents('api::chapter.chapter').findOne({
-      documentId: chapter.documentId,
-      populate: { partners: { fields: ['name'] } },
-      status: 'draft',
-    });
-    body.partners = (withPartners?.partners ?? []).map((p) => p.documentId);
-  }
-
-  ctx.body = { data: body };
-```
+One call, not two: the catalogue and the current selection arrive together, so there is no state where one loaded and the other did not — which is the condition that makes an accidental detach possible.
 
 - [ ] **Step 4: `index.ts` re-exports everything**
 
@@ -1277,20 +1426,32 @@ export * from "./partners";
 export * from "./media";
 ```
 
-- [ ] **Step 5: Delete the old file and typecheck**
+- [ ] **Step 5: Fix the one call site the split breaks**
 
-```bash
-cd /Users/nk/Projects/AREAA/areaa-frontend && rm src/lib/chapter-admin.ts && \
-  npm run check && npm test
+`getEvent` gains a required third argument. Fix it **here**, in the same task, so the chunk ends green — v1 deferred this to Task 10 and left two commits with a red typecheck:
+
+```diff
+ // events/[documentId].astro
+-const event = await getEvent(jwt, documentId!);
++const event = await getEvent(jwt, documentId!, chapter.slug);
 ```
 
-Expected: **0 errors** and **54 passed**. The only expected error is `events/[documentId].astro` failing to supply `getEvent`'s third argument — fix it there (Task 10), not by making the parameter optional. If any *other* file errors, `index.ts` is missing an export.
+- [ ] **Step 6: Delete the old file and verify**
 
-- [ ] **Step 6: Commit**
+Run the two gates **separately** — `&&` short-circuits, so a typecheck failure would hide whether the tests ran at all:
+
+```bash
+cd /Users/nk/Projects/AREAA/areaa-frontend && rm src/lib/chapter-admin.ts && npm run check
+cd /Users/nk/Projects/AREAA/areaa-frontend && npm test
+```
+
+Expected: **0 errors**, then **54 passed**. Any error naming a file other than the ones this task touched means `index.ts` is missing an export.
+
+- [ ] **Step 7: Commit**
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-frontend && \
-  git add -A src/lib/ && \
+  git add -A src/lib/ "src/pages/account/chapter/[chapterSlug]/events/[documentId].astro" && \
   git commit -m "refactor: split the chapter-admin client into one module per resource"
 ```
 
@@ -1298,11 +1459,11 @@ cd /Users/nk/Projects/AREAA/areaa-frontend && \
 
 ## Chunk 4: Partners UI
 
-### Task 9: Payload mapping and the screen
+### Task 9: Payload mapping, the form, the route and the screen
 
-**Files:** Create `src/lib/partners-form.ts`, `tests/unit/partners-form.test.ts`, `src/components/PartnersForm.astro`, `src/pages/api/chapter-admin/partners.ts`, `src/pages/account/chapter/[chapterSlug]/partners.astro`
+**Files:** Create `src/lib/partners-form.ts`, `tests/unit/partners-form.test.ts`, `src/components/PartnersForm.astro`, `tests/unit/partners-form-render.test.ts`, `src/pages/api/chapter-admin/partner.ts`, `src/pages/account/chapter/[chapterSlug]/partners.astro`
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing payload test**
 
 ```ts
 import { describe, it, expect } from "vitest";
@@ -1318,20 +1479,18 @@ const form = (entries: Record<string, string | string[]>) => {
 };
 
 describe("toPartnersPayload", () => {
-    it("collects every checked partner", () => {
-        expect(toPartnersPayload(form({ partners: ["p1", "p2"], partners__present: "1" })))
-            .toEqual(["p1", "p2"]);
+    it("collects every checked partner, in order", () => {
+        expect(toPartnersPayload(form({ partners: ["p2", "p1"], partners__present: "1" })))
+            .toEqual(["p2", "p1"]);
     });
 
     it("returns an EMPTY array when the picker was shown and nothing checked", () => {
-        // Detaching every sponsor is a legitimate act; without the marker it is
-        // indistinguishable from "no picker on the form".
         expect(toPartnersPayload(form({ partners__present: "1" }))).toEqual([]);
     });
 
     it("returns null when the picker was NOT on the form", () => {
         // null tells the route to skip the write entirely, rather than sending
-        // [] and detaching everything.
+        // [] and detaching every sponsor.
         expect(toPartnersPayload(form({}))).toBeNull();
     });
 
@@ -1347,15 +1506,7 @@ describe("toPartnersPayload", () => {
 });
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
-
-```bash
-cd /Users/nk/Projects/AREAA/areaa-frontend && npx vitest run tests/unit/partners-form.test.ts
-```
-
-Expected: FAIL — module not found.
-
-- [ ] **Step 3: Implement**
+- [ ] **Step 2: Implement the mapper**
 
 ```ts
 /**
@@ -1365,6 +1516,8 @@ Expected: FAIL — module not found.
  * unchecked checkbox list posts no keys, so without `partners__present` the
  * route cannot tell "detach everything" from "this form had no picker" — and
  * sending [] for the second case would silently drop every sponsor.
+ *
+ * Order is preserved: partner_ord drives the order the microsite renders.
  */
 export function toPartnersPayload(fd: FormData): string[] | null {
     if (fd.get("partners__present") === null) return null;
@@ -1373,7 +1526,166 @@ export function toPartnersPayload(fd: FormData): string[] | null {
 }
 ```
 
-- [ ] **Step 4: The route**
+- [ ] **Step 3: Write the failing render test**
+
+This is the guard v1 lacked. `MultiSelect` emits its marker whenever it renders options, so **the form must not render the picker unless it knows the current selection** — otherwise every box shows unchecked and a save detaches everything.
+
+```ts
+import { describe, it, expect } from "vitest";
+import { experimental_AstroContainer as AstroContainer } from "astro/container";
+import PartnersForm from "../../src/components/PartnersForm.astro";
+
+const CATALOGUE = {
+    partners: [
+        { documentId: "p1", name: "Chase", sponsorshipLevel: "Gold", logoUrl: "/a.png" },
+        { documentId: "p2", name: "Citi", sponsorshipLevel: "Silver", logoUrl: "/b.png" },
+    ],
+    attached: ["p2"],
+    slot: "ok",
+};
+
+const render = async (props: Record<string, unknown>) => {
+    const container = await AstroContainer.create();
+    return container.renderToString(PartnersForm, { props: { chapterSlug: "boston", ...props } });
+};
+
+describe("PartnersForm", () => {
+    it("renders the picker with the current selection pre-checked", async () => {
+        const html = await render({ catalogue: CATALOGUE });
+        expect(html.match(/type="checkbox"/g)).toHaveLength(2);
+        expect(html.match(/\schecked[\s>]/g)).toHaveLength(1);
+        expect(html).toContain('name="partners__present"');
+        expect(html).toContain("Save Partners");
+    });
+
+    it("renders NO picker and NO save button when the catalogue failed to load", async () => {
+        // The Case-D guard. With a picker rendered here, the marker would post
+        // and the save would replace the real selection with nothing.
+        const html = await render({ catalogue: null });
+        expect(html).not.toContain("__present");
+        expect(html).not.toContain("<input type=\"checkbox\"");
+        expect(html).not.toContain("Save Partners");
+    });
+
+    it("explains, without a save button, when the chapter has no page or slot", async () => {
+        for (const slot of ["no-home-page", "no-partner-group"]) {
+            const html = await render({ catalogue: { ...CATALOGUE, slot } });
+            expect(html).not.toContain("__present");
+            expect(html).not.toContain("Save Partners");
+        }
+    });
+
+    it("explains, without a save button, when no partners exist nationally", async () => {
+        // v1 rendered a Save button here that could only ever fail, with a
+        // message claiming the list had not loaded.
+        const html = await render({ catalogue: { partners: [], attached: [], slot: "ok" } });
+        expect(html).not.toContain("Save Partners");
+        expect(html).toContain("no partners");
+    });
+});
+```
+
+- [ ] **Step 4: Run it and watch it fail**
+
+```bash
+cd /Users/nk/Projects/AREAA/areaa-frontend && npx vitest run tests/unit/partners-form-render.test.ts
+```
+
+Expected: FAIL — module not found.
+
+- [ ] **Step 5: The component**
+
+```astro
+---
+import MultiSelect from "./MultiSelect.astro";
+import type { PartnerCatalogue } from "../lib/chapter-admin";
+
+interface Props {
+    chapterSlug: string;
+    /** null means the catalogue OR the current selection could not be read. */
+    catalogue: PartnerCatalogue | null;
+    error?: string | null;
+}
+
+const { chapterSlug, catalogue, error = null } = Astro.props;
+
+const messages: Record<string, string> = {
+    forbidden: "You don't have permission to change this chapter's partners.",
+    missing: "The partner list didn't load, so nothing was changed. Please refresh.",
+    stale: "One of those partners has since been removed nationally. Refresh and try again.",
+    save: "Something went wrong saving. Please try again.",
+};
+const errorMessage = error ? (messages[error] ?? messages.save) : null;
+
+const slotMessages: Record<string, string> = {
+    "no-home-page": "This chapter doesn't have a microsite page yet, so there's nowhere to show partners. Contact national to have one set up.",
+    "no-partner-group": "This chapter's page doesn't have a partners section. Contact national to have one added.",
+};
+
+// The picker renders ONLY when we know both the candidates and the current
+// selection. Rendering it otherwise emits the presence marker, and a save would
+// then replace the real selection with whatever happened to be checked.
+const canEdit = catalogue !== null && catalogue.slot === "ok" && catalogue.partners.length > 0;
+
+const options = (catalogue?.partners ?? []).map((p) => ({
+    value: p.documentId,
+    label: p.name,
+    hint: p.sponsorshipLevel || undefined,
+}));
+---
+
+<form class="pform" method="post" action="/api/chapter-admin/partner" novalidate>
+    <input type="hidden" name="chapterSlug" value={chapterSlug} />
+
+    {errorMessage && <p class="pform__error" role="alert">{errorMessage}</p>}
+
+    {catalogue === null && (
+        <p class="pform__error" role="alert">
+            Couldn't load the partner list. Refresh to try again — nothing has changed.
+        </p>
+    )}
+
+    {catalogue !== null && catalogue.slot !== "ok" && (
+        <p class="pform__note">{slotMessages[catalogue.slot] ?? slotMessages["no-partner-group"]}</p>
+    )}
+
+    {catalogue !== null && catalogue.slot === "ok" && catalogue.partners.length === 0 && (
+        <p class="pform__note">
+            There are no partners set up nationally yet, so there is nothing to choose from.
+        </p>
+    )}
+
+    {canEdit && (
+        <>
+            <MultiSelect
+                legend="Partners on your microsite"
+                name="partners"
+                options={options}
+                selected={catalogue!.attached}
+                helper="Partner details are managed nationally — you choose which appear on your chapter's page, and in what order. Unchecking everything removes them all."
+            />
+            <div class="pform__actions">
+                <button type="submit" class="btn btn--primary">Save Partners</button>
+            </div>
+        </>
+    )}
+</form>
+
+<style>
+    .pform { display: flex; flex-direction: column; gap: var(--space-600); max-width: 640px; }
+    .pform__error, .pform__note {
+        margin: 0; padding: var(--space-300) var(--space-400);
+        border: var(--stroke-border) solid var(--primitive-brand-300);
+        border-radius: var(--radius-100);
+        background-color: var(--primitive-brand-50);
+        color: var(--primitive-brand-700);
+        font-family: var(--font-family-body); font-size: 16px;
+    }
+    .pform__actions { display: flex; gap: var(--space-400); }
+</style>
+```
+
+- [ ] **Step 6: The route** (`partner.ts`, singular — matching `event.ts`, `committee.ts`, `news.ts`)
 
 ```ts
 import type { APIRoute } from "astro";
@@ -1388,101 +1700,32 @@ export const POST: APIRoute = async (ctx) => {
     if (begun instanceof Response) return begun;
     const { jwt, form, chapterSlug, base, back } = begun;
 
+    // `settings`-style section: `base` IS the page path, and `editPath` is
+    // meaningless here — do not use it.
     const partners = toPartnersPayload(form);
-    // null means the picker never rendered — do not send [] and detach the lot.
+    // null means the picker never rendered. Do NOT send [] and detach the lot.
     if (partners === null) return back(base, "error=missing");
 
     const result = await savePartners(jwt, chapterSlug, partners);
     if (!result.ok) {
-        return back(base, result.status === 403 ? "error=forbidden" : "error=save");
+        if (result.status === 403) return back(base, "error=forbidden");
+        // 400 is the deliberate "a partner was removed nationally" case —
+        // collapsing it into a generic retry invites an infinite loop.
+        if (result.status === 400) return back(base, "error=stale");
+        return back(base, "error=save");
     }
     return back(base, "saved=1");
 };
 ```
 
-- [ ] **Step 5: The component**
-
-`PartnersForm.astro` is `MultiSelect` plus a submit button. Reuse the picker exactly — its `hint` slot carries the sponsorship level:
-
-```astro
----
-import MultiSelect from "./MultiSelect.astro";
-import type { AdminPartner } from "../lib/chapter-admin";
-
-interface Props {
-    chapterSlug: string;
-    /** null means the catalogue could not be loaded — NOT that it is empty. */
-    catalogue: AdminPartner[] | null;
-    attached: string[];
-    error?: string | null;
-}
-
-const { chapterSlug, catalogue, attached, error = null } = Astro.props;
-
-const options = (catalogue ?? []).map((p) => ({
-    value: p.documentId,
-    label: p.name,
-    hint: p.sponsorshipLevel || undefined,
-}));
-
-const messages: Record<string, string> = {
-    forbidden: "You don't have permission to change this chapter's partners.",
-    missing: "The partner list didn't load, so nothing was changed. Please refresh.",
-    save: "Something went wrong saving. Please try again.",
-};
-const errorMessage = error ? (messages[error] ?? messages.save) : null;
----
-
-<form class="pform" method="post" action="/api/chapter-admin/partners" novalidate>
-    <input type="hidden" name="chapterSlug" value={chapterSlug} />
-
-    {errorMessage && <p class="pform__error" role="alert">{errorMessage}</p>}
-
-    {catalogue === null ? (
-        <p class="pform__error" role="alert">
-            Couldn't load the partner catalogue. Refresh to try again — nothing has changed.
-        </p>
-    ) : (
-        <>
-            <MultiSelect
-                legend="Partners on your microsite"
-                name="partners"
-                options={options}
-                selected={attached}
-                emptyMessage="No partners have been set up nationally yet."
-                helper="Partner details are managed nationally — you choose which appear on your chapter's page. Unchecking everything removes them all."
-            />
-            <div class="pform__actions">
-                <button type="submit" class="btn btn--primary">Save Partners</button>
-            </div>
-        </>
-    )}
-</form>
-
-<style>
-    .pform { display: flex; flex-direction: column; gap: var(--space-600); max-width: 640px; }
-    .pform__error {
-        margin: 0; padding: var(--space-300) var(--space-400);
-        border: var(--stroke-border) solid var(--primitive-brand-300);
-        border-radius: var(--radius-100);
-        background-color: var(--primitive-brand-50);
-        color: var(--primitive-brand-700);
-        font-family: var(--font-family-body); font-size: 16px;
-    }
-    .pform__actions { display: flex; gap: var(--space-400); }
-</style>
-```
-
-- [ ] **Step 6: The page**
-
-`src/pages/account/chapter/[chapterSlug]/partners.astro` — four levels up, matching `settings.astro`:
+- [ ] **Step 7: The page** (four levels up, matching `settings.astro`)
 
 ```astro
 ---
 import ChapterAdminLayout from "../../../../layouts/ChapterAdminLayout.astro";
 import PartnersForm from "../../../../components/PartnersForm.astro";
 import { SESSION_COOKIE } from "../../../../lib/auth";
-import { listPartners, listAttachedPartners } from "../../../../lib/chapter-admin";
+import { listPartners } from "../../../../lib/chapter-admin";
 
 export const prerender = false;
 
@@ -1494,10 +1737,9 @@ const chapter = member.administeredChapters.find((c) => c.slug === chapterSlug);
 if (!chapter) return Astro.redirect("/account?error=not-chapter-admin");
 
 const jwt = Astro.cookies.get(SESSION_COOKIE)?.value ?? "";
-const [catalogue, attached] = await Promise.all([
-    listPartners(jwt, chapter.slug),
-    listAttachedPartners(jwt, chapter.slug),
-]);
+// One call: candidates and current selection arrive together, so there is no
+// state where one loaded and the other did not.
+const catalogue = await listPartners(jwt, chapter.slug);
 
 const sp = Astro.url.searchParams;
 const flash = sp.get("saved") ? "Partners saved." : null;
@@ -1513,12 +1755,7 @@ const error = sp.get("error");
     <h1 class="ppage__title">Partners</h1>
     {flash && <p class="ppage__flash" role="status">{flash}</p>}
 
-    <PartnersForm
-        chapterSlug={chapter.slug}
-        catalogue={catalogue}
-        attached={attached ?? []}
-        error={error}
-    />
+    <PartnersForm chapterSlug={chapter.slug} catalogue={catalogue} error={error} />
 </ChapterAdminLayout>
 
 <style>
@@ -1534,26 +1771,30 @@ const error = sp.get("error");
 </style>
 ```
 
-- [ ] **Step 7: Nav entry**
+- [ ] **Step 8: Nav entry**
 
-In `ChapterAdminLayout.astro`, between Committees and Submissions:
+In `ChapterAdminLayout.astro`, between Committees and Submissions — and **update the stale comment above `NAV`**, which still says partners "arrive in plan 4":
 
 ```js
     { key: "partners", label: "Partners", href: `/account/chapter/${chapterSlug}/partners` },
 ```
 
-- [ ] **Step 8: Typecheck, test, commit**
+- [ ] **Step 9: Verify and commit**
+
+Separate gates, not `&&`:
 
 ```bash
-cd /Users/nk/Projects/AREAA/areaa-frontend && npm run check && npm test
+cd /Users/nk/Projects/AREAA/areaa-frontend && npm run check
+cd /Users/nk/Projects/AREAA/areaa-frontend && npm test
 ```
 
-Expected: 0 errors, **59 passed** (54 + 5).
+Expected: **0 errors**, then **63 passed** (54 + 5 + 4).
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-frontend && \
   git add src/lib/partners-form.ts tests/unit/partners-form.test.ts \
-          src/components/PartnersForm.astro src/pages/api/chapter-admin/partners.ts \
+          src/components/PartnersForm.astro tests/unit/partners-form-render.test.ts \
+          src/pages/api/chapter-admin/partner.ts \
           "src/pages/account/chapter/[chapterSlug]/partners.astro" \
           src/layouts/ChapterAdminLayout.astro && \
   git commit -m "feat: partner attach/detach screen"
@@ -1561,13 +1802,13 @@ cd /Users/nk/Projects/AREAA/areaa-frontend && \
 
 ---
 
-## Chunk 5: Retire the client-side filters
+## Chunk 5: Retire the client-side filters, and explain a bounce
 
 ### Task 10: Pages use the server-side scoping
 
-Three pages currently filter after the fact, and `events/[documentId].astro` must supply `getEvent`'s new third argument.
+Three list pages filter after the fact — and the events list does not filter at all, which after Task 3 would leave rows that redirect to an error the page cannot render.
 
-**Files:** Modify the committee and news list pages, and all three `[documentId].astro` edit pages
+**Files:** Modify the committee, news and **events** list pages
 
 - [ ] **Step 1: Committee list**
 
@@ -1575,22 +1816,16 @@ Three pages currently filter after the fact, and `events/[documentId].astro` mus
 -const all = await listCommittees(jwt);
 +const all = await listCommittees(jwt, chapter.slug);
  const failed = all === null;
--// The API scopes to every chapter the caller administers; this page is scoped
--// to one. …
 -const rows = (all ?? []).filter((c) => c.chapter?.slug === chapter.slug);
-+// Scoped server-side now; no client-side narrowing.
++// Scoped server-side now.
 +const rows = all ?? [];
 ```
 
-The two-branch empty state collapses back to one, since `rows` and `all` are now the same set:
+The two-branch empty state collapses to one, because `rows` and `all` are now the same set:
 
 ```diff
--    {!failed && rows.length === 0 && (all ?? []).length === 0 && (
--        <p class="clist__empty">No committees yet. …</p>
--    )}
--    {!failed && rows.length === 0 && (all ?? []).length > 0 && (
--        <p class="clist__empty">No committees for {chapter.name} yet. …</p>
--    )}
+-    {!failed && rows.length === 0 && (all ?? []).length === 0 && ( … )}
+-    {!failed && rows.length === 0 && (all ?? []).length > 0 && ( … )}
 +    {!failed && rows.length === 0 && (
 +        <p class="clist__empty">No committees yet. <a href={`${base}/new`}>Create the first one.</a></p>
 +    )}
@@ -1606,36 +1841,63 @@ The two-branch empty state collapses back to one, since `rows` and `all` are now
 +const items = result.ok ? result.items : [];
 ```
 
-And the split empty state collapses, because `pagination.total` now describes this chapter alone:
+**Keep both empty-state branches.** Scoping fixes *which chapter*, not *which page*: `?page=99` from a stale bookmark, or a deletion that shrinks `pageCount`, still yields zero items with `total > 0`. Collapsing them would print "No articles yet. Write the first one." above a pagination nav listing real pages. Only the second branch's wording needs no change:
 
-```diff
--    {!failed && pagination.total === 0 && ( … "No articles yet" … )}
--    {!failed && pagination.total > 0 && items.length === 0 && ( … "on this page" … )}
-+    {!failed && items.length === 0 && (
-+        <p class="nlist__empty">No articles yet. <a href={`${base}/new`}>Write the first one.</a></p>
-+    )}
+```astro
+    {!failed && pagination.total === 0 && (
+        <p class="nlist__empty">No articles yet. <a href={`${base}/new`}>Write the first one.</a></p>
+    )}
+    {!failed && pagination.total > 0 && items.length === 0 && (
+        <p class="nlist__empty">
+            No articles on this page.
+            {page > 1 && <> <a href={base}>Back to the first page.</a></>}
+        </p>
+    )}
 ```
 
-This is the point of the change: pagination and rendering finally describe the same set, so "page 2 of 3" can no longer render nothing.
+The committee page has no pagination, so collapsing **is** right there. The two pages are not symmetric.
 
-- [ ] **Step 3: The three edit pages**
+- [ ] **Step 3: Events list — scoping AND an error map**
 
-`committees/[documentId].astro` and `news/[documentId].astro` already pass `chapter.slug`; they need no edit — the *client* changed, not the call. `events/[documentId].astro` does:
+`events/index.astro` never filtered, so a multi-chapter admin sees other chapters' events. After Task 3 those rows redirect with `error=missing`, and this page has no `errorMessages` — so clicking one would do nothing visible.
 
 ```diff
--const event = await getEvent(jwt, documentId!);
-+const event = await getEvent(jwt, documentId!, chapter.slug);
+-const result = await listEvents(jwt, { page });
++const result = await listEvents(jwt, { page, chapterSlug: chapter.slug });
 ```
 
-- [ ] **Step 4: Typecheck and test**
+Add the map alongside the existing flash handling, mirroring the committee page:
+
+```ts
+const errorMessages: Record<string, string> = {
+    missing: "That event could not be found.",
+    forbidden: "You don't have permission to change that event.",
+    delete: "That event couldn't be deleted. Please try again.",
+    save: "Something went wrong. Please try again.",
+};
+const errorParam = sp.get("error");
+const errorMessage = errorParam ? (errorMessages[errorParam] ?? errorMessages.save) : null;
+```
+
+```astro
+    {errorMessage && <p class="evlist__error" role="alert">{errorMessage}</p>}
+```
+
+Do the same for the chapter overview (`[chapterSlug]/index.astro`), whose "total events" count currently spans every administered chapter:
+
+```diff
+-const result = await listEvents(jwt, { pageSize: 5 });
++const result = await listEvents(jwt, { pageSize: 5, chapterSlug: chapter.slug });
+```
+
+- [ ] **Step 4: Verify and commit**
 
 ```bash
-cd /Users/nk/Projects/AREAA/areaa-frontend && npm run check && npm test
+cd /Users/nk/Projects/AREAA/areaa-frontend && npm run check
+cd /Users/nk/Projects/AREAA/areaa-frontend && npm test
 ```
 
-Expected: 0 errors, 59 passed.
-
-- [ ] **Step 5: Commit**
+Expected: 0 errors, 63 passed.
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-frontend && \
@@ -1647,13 +1909,13 @@ cd /Users/nk/Projects/AREAA/areaa-frontend && \
 
 ### Task 11: `/account` explains a bounce
 
-Five routes and ten page guards redirect to `/account?error=not-chapter-admin`, and the page renders nothing — so a bounced member lands on their dashboard with no idea why.
+Twelve page guards plus `form-route.ts` and `middleware.ts` redirect to `/account?error=not-chapter-admin`, and the page renders nothing.
 
 **Files:** Modify `src/pages/account/index.astro`
 
 - [ ] **Step 1: Render the message**
 
-In the frontmatter:
+Frontmatter — the file's own BEM namespace is `welcome__*`, so match it:
 
 ```ts
 const errorMessages: Record<string, string> = {
@@ -1663,16 +1925,14 @@ const errorParam = Astro.url.searchParams.get("error");
 const errorMessage = errorParam ? (errorMessages[errorParam] ?? null) : null;
 ```
 
-and near the top of the rendered body, before the existing content:
+Before the `welcome` block:
 
 ```astro
-{errorMessage && <p class="account__error" role="alert">{errorMessage}</p>}
+{errorMessage && <p class="welcome__error" role="alert">{errorMessage}</p>}
 ```
 
-with a style matching the other flash blocks:
-
 ```css
-    .account__error {
+    .welcome__error {
         margin: 0 0 var(--space-600);
         padding: var(--space-300) var(--space-400);
         border: var(--stroke-border) solid var(--primitive-brand-300);
@@ -1685,7 +1945,7 @@ with a style matching the other flash blocks:
 
 Unknown codes render nothing rather than a generic fallback — `/account` is a normal destination and should not accuse the user of an error it cannot name.
 
-- [ ] **Step 2: Typecheck and commit**
+- [ ] **Step 2: Verify and commit**
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-frontend && npm run check && \
@@ -1699,36 +1959,44 @@ Expected: 0 errors.
 
 ## Chunk 6: Verification
 
-### Task 12: Both suites
+### Task 12: Both suites, twice, with no drift
 
 - [ ] **Step 1: Run them**
+
+Separate gates, not `&&`:
 
 ```bash
 pkill -f "strapi develop" ; \
   PATH="/opt/homebrew/bin:$PATH" npm test
-cd /Users/nk/Projects/AREAA/areaa-frontend && npm test && npm run check
+cd /Users/nk/Projects/AREAA/areaa-frontend && npm test
+cd /Users/nk/Projects/AREAA/areaa-frontend && npm run check
 ```
 
-Expected: **159 CMS**, **59 frontend**, 0 typecheck errors.
+Expected: **168 CMS**, **63 frontend**, 0 typecheck errors.
 
-- [ ] **Step 2: Twice, with no row growth**
+- [ ] **Step 2: Twice, with no row growth AND no reordering**
+
+A count gate cannot see a reordered sponsor list, which is what v1's did wrong.
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-cms && \
-  sqlite3 .tmp/data.db "SELECT (SELECT COUNT(*) FROM up_users) u, (SELECT COUNT(DISTINCT document_id) FROM committees) c, (SELECT COUNT(DISTINCT document_id) FROM news_items) n, (SELECT COUNT(DISTINCT document_id) FROM events) e, (SELECT COUNT(*) FROM files) f, (SELECT COUNT(*) FROM chapters_partners_lnk) p;" && \
+  snapshot() { sqlite3 .tmp/data.db "SELECT (SELECT COUNT(*) FROM up_users) u, (SELECT COUNT(DISTINCT document_id) FROM committees) c, (SELECT COUNT(DISTINCT document_id) FROM news_items) n, (SELECT COUNT(DISTINCT document_id) FROM events) e, (SELECT COUNT(*) FROM files) f;" ; \
+    sqlite3 .tmp/data.db "SELECT partner_group_id, group_concat(partner_id, ',') FROM (SELECT * FROM components_shared_partner_groups_partners_lnk ORDER BY partner_group_id, partner_ord) GROUP BY partner_group_id;" ; } && \
+  snapshot > /tmp/p4-before.txt && \
   PATH="/opt/homebrew/bin:$PATH" npm test > /dev/null && \
-  sqlite3 .tmp/data.db "SELECT (SELECT COUNT(*) FROM up_users) u, (SELECT COUNT(DISTINCT document_id) FROM committees) c, (SELECT COUNT(DISTINCT document_id) FROM news_items) n, (SELECT COUNT(DISTINCT document_id) FROM events) e, (SELECT COUNT(*) FROM files) f, (SELECT COUNT(*) FROM chapters_partners_lnk) p;"
+  snapshot > /tmp/p4-after.txt && \
+  diff /tmp/p4-before.txt /tmp/p4-after.txt && echo "IDENTICAL" || echo "DRIFT — do not proceed"
 ```
 
-Expected: **the two rows are identical.** `chapters_partners_lnk` is new to this gate and matters most — the partners suite rewrites real chapters' sponsor lists and must put them back.
+Expected: `IDENTICAL`.
 
 ---
 
 ### Task 13: Prove it in a browser
 
-- [ ] **Step 1: Create a two-chapter admin**
+- [ ] **Step 1: Create a two-chapter admin, and pick chapters that can exercise it**
 
-Several behaviours in this plan only differ for a caller who administers more than one chapter, and `chapadmin` administers one.
+Several behaviours only differ for a caller administering more than one chapter, and `chapadmin` administers one. **The chapters must be chosen, not assumed**: the walkthrough needs each to hold at least one committee and one news item, and `boston` currently has zero news.
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-cms && PATH="/opt/homebrew/bin:$PATH" node -e "
@@ -1737,23 +2005,67 @@ const { createStrapi, compileStrapi } = require('@strapi/strapi');
   const app = await createStrapi(await compileStrapi()).load();
   app.log.level = 'error';
   const role = await app.query('plugin::users-permissions.role').findOne({ where: { type: 'chapter_admin' } });
-  const chapters = await app.documents('api::chapter.chapter').findMany({ fields: ['slug'], limit: 2, sort: ['slug:asc'], status: 'draft' });
+  const chapters = await app.documents('api::chapter.chapter').findMany({ fields: ['slug'], limit: -1, status: 'draft' });
+
+  // Report what each chapter actually holds, so the walkthrough uses chapters
+  // that can exercise it rather than whichever two sort first.
+  for (const c of chapters) {
+    const [cm, nw, pg] = await Promise.all([
+      app.documents('api::committee.committee').count({ filters: { chapter: { slug: c.slug } }, status: 'draft' }),
+      app.documents('api::news-item.news-item').count({ filters: { chapter: { slug: c.slug } }, status: 'draft' }),
+      app.documents('api::page.page').findFirst({ filters: { slug: 'home', chapter: { slug: c.slug } }, status: 'draft' }),
+    ]);
+    console.log(\`  \${c.slug}: committees=\${cm} news=\${nw} homePage=\${pg ? 'yes' : 'NO'}\`);
+  }
+
+  const usable = [];
+  for (const c of chapters) {
+    const cm = await app.documents('api::committee.committee').count({ filters: { chapter: { slug: c.slug } }, status: 'draft' });
+    const nw = await app.documents('api::news-item.news-item').count({ filters: { chapter: { slug: c.slug } }, status: 'draft' });
+    if (cm > 0 && nw > 0) usable.push(c);
+  }
+  if (usable.length < 2) {
+    console.log('\nWARNING: fewer than two chapters hold BOTH a committee and a news item.');
+    console.log('Rows 11-12 need one of each in each chapter — create them, or skip those rows and say so.');
+  }
+  const picked = (usable.length >= 2 ? usable : chapters).slice(0, 2);
+
   const email = 'twochapter@areaa.test';
   let user = await app.query('plugin::users-permissions.user').findOne({ where: { email } });
   if (!user) {
     user = await app.plugin('users-permissions').service('user').add({
       username: email, email, password: 'Password123!', confirmed: true, provider: 'local',
       firstName: 'Two', lastName: 'Chapter', role: role.id,
-      administeredChapters: chapters.map((c) => c.id),
+      administeredChapters: picked.map((c) => c.id),
+    });
+  } else {
+    // Re-assert rather than skip: a leftover account from an earlier attempt
+    // may administer different chapters, or none, and the log would still look
+    // fine while the walkthrough silently tested nothing.
+    await app.query('plugin::users-permissions.user').update({
+      where: { id: user.id },
+      data: { role: role.id, administeredChapters: picked.map((c) => c.id) },
     });
   }
-  console.log('two-chapter admin administers:', chapters.map((c) => c.slug).join(', '));
+  console.log('\ntwochapter@areaa.test now administers:', picked.map((c) => c.slug).join(', '));
   await app.destroy(); process.exit(0);
 })();
 "
 ```
 
-- [ ] **Step 2: Start both servers**
+Use the two slugs it prints as **A** and **B** below.
+
+- [ ] **Step 2: Snapshot the live microsite content before touching it**
+
+Rows 2–3 rewrite a real chapter's sponsor list. `git status` cannot see this — `.tmp/data.db` is untracked.
+
+```bash
+cd /Users/nk/Projects/AREAA/areaa-cms && \
+  sqlite3 .tmp/data.db "SELECT partner_group_id, group_concat(partner_id, ',') FROM (SELECT * FROM components_shared_partner_groups_partners_lnk ORDER BY partner_group_id, partner_ord) GROUP BY partner_group_id;" > /tmp/p4-walk-before.txt && \
+  cat /tmp/p4-walk-before.txt
+```
+
+- [ ] **Step 3: Start both servers**
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-cms && PATH="/opt/homebrew/bin:$PATH" node ./node_modules/.bin/strapi develop &
@@ -1762,46 +2074,46 @@ cd /Users/nk/Projects/AREAA/areaa-frontend && npm run dev &
 
 Note the port Astro reports.
 
-- [ ] **Step 3: Walk it as `chapadmin@areaa.test` / `Password123!`**
+- [ ] **Step 4: Walk it as `chapadmin@areaa.test` / `Password123!`**
 
 | # | Action | Expected |
 |---|---|---|
 | 1 | Sidebar | Overview, Events, News, Committees, **Partners**, Submissions, Settings |
-| 2 | Partners → check two → Save | "Partners saved."; both stay checked on reload |
-| 3 | **Uncheck everything** → Save | All unchecked on reload — the presence marker again |
-| 4 | Visit the chapter's public microsite | The partner grid matches what you selected |
-| 5 | Open a committee, edit, Save | Still works — the client split changed nothing visible |
-| 6 | Open an event, edit, Save | Still works, via the new single-record route |
-| 7 | Disable JavaScript, repeat 2–3 | Everything still works |
+| 2 | Partners → check two, in a deliberate order → Save | "Partners saved."; both checked on reload, **in that order** |
+| 3 | **Visit the chapter's public microsite** | The partner grid shows exactly those two, in that order — this is the claim v1 could not make |
+| 4 | **Uncheck everything** → Save → reload the microsite | Grid empty |
+| 5 | Re-check one → Save | Grid shows one |
+| 6 | Open a committee, edit, Save | Still works — the client split changed nothing visible |
+| 7 | Open an event, edit, Save | Still works, via the new single-record route |
+| 8 | Disable JavaScript, repeat 2 and 4 | Everything still works |
 
-- [ ] **Step 4: Walk the multi-chapter cases as `twochapter@areaa.test`**
+- [ ] **Step 5: The multi-chapter cases, as `twochapter@areaa.test`**
 
-These are the ones `chapadmin` cannot exercise, and the reason Step 1 exists.
+These are what `chapadmin` cannot exercise.
 
 | # | Action | Expected |
 |---|---|---|
-| 8 | `/account` | **Two** entries under Chapter Admin |
-| 9 | Chapter A → Committees | Only A's committees; the count matches the rows |
-| 10 | Chapter B → Committees | Only B's |
+| 9 | `/account` | **Two** entries under Chapter Admin |
+| 10 | Chapter A → Committees, then Chapter B → Committees | Each shows only its own; counts match the rows |
 | 11 | Copy a committee id from B, open it under **A's** URL | Redirected to A's list with "That committee could not be found." — **not** an editable form |
-| 12 | Same for a news item | Same |
-| 13 | Chapter A → News, page through if there is more than one page | Every page renders rows; no page count that overstates the chapter |
+| 12 | Same for a news item, and for an event | Same, including a visible message on the events list |
 
-Row 11 is the important one: it is the cross-chapter edit screen that made a silent roster wipe reachable, now closed server-side rather than by a client-side `.find()`.
+Row 11 is the important one: the cross-chapter edit screen that made a silent roster wipe reachable, now closed server-side.
 
-- [ ] **Step 5: A member who administers nothing**
+- [ ] **Step 6: A member who administers nothing**
 
-Sign in as `plainmember@areaa.test`. Visit `/account/chapter/aloha-hawaii/partners` directly.
+Sign in as `plainmember@areaa.test`, visit `/account/chapter/<A>/partners`.
 
-Expected: redirected to `/account`, **and the page now says** "You don't have access to that chapter's admin area." — previously it said nothing at all.
+Expected: redirected to `/account`, **and the page says** "You don't have access to that chapter's admin area." — previously it said nothing.
 
-- [ ] **Step 6: Attacks by hand**
+- [ ] **Step 7: Attacks by hand**
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-cms && \
 JWT=$(curl -s -X POST http://localhost:1337/api/auth/local -H "Content-Type: application/json" \
   -d '{"identifier":"chapadmin@areaa.test","password":"Password123!"}' \
   | python3 -c "import json,sys; print(json.load(sys.stdin)['jwt'])") && \
+PARTNER=$(sqlite3 .tmp/data.db "SELECT document_id FROM partners WHERE published_at IS NULL LIMIT 1;") && \
 echo "--- partners:null (expect 400, not a silent detach) ---" && \
 curl -s -o /dev/null -w "%{http_code}\n" -X PUT http://localhost:1337/api/chapter-admin/partners \
   -H "Authorization: Bearer $JWT" -H "Content-Type: application/json" \
@@ -1810,6 +2122,12 @@ echo "--- unknown partner id (expect 400) ---" && \
 curl -s -o /dev/null -w "%{http_code}\n" -X PUT http://localhost:1337/api/chapter-admin/partners \
   -H "Authorization: Bearer $JWT" -H "Content-Type: application/json" \
   -d '{"chapterSlug":"aloha-hawaii","partners":["nosuchpartner000000000000"]}' && \
+echo "--- rename smuggle (expect the name UNCHANGED) ---" && \
+echo -n "  before: " && sqlite3 .tmp/data.db "SELECT DISTINCT name FROM partners WHERE document_id='$PARTNER';" && \
+curl -s -o /dev/null -X PUT http://localhost:1337/api/chapter-admin/partners \
+  -H "Authorization: Bearer $JWT" -H "Content-Type: application/json" \
+  -d "{\"chapterSlug\":\"aloha-hawaii\",\"partners\":[{\"documentId\":\"$PARTNER\",\"name\":\"Hacked\"}]}" && \
+echo -n "  after:  " && sqlite3 .tmp/data.db "SELECT DISTINCT name FROM partners WHERE document_id='$PARTNER';" && \
 echo "--- another chapter's partners (expect 403) ---" && \
 FOREIGN=$(sqlite3 .tmp/data.db "SELECT slug FROM chapters WHERE slug != 'aloha-hawaii' LIMIT 1;") && \
 curl -s -o /dev/null -w "%{http_code}\n" -X PUT http://localhost:1337/api/chapter-admin/partners \
@@ -1817,43 +2135,53 @@ curl -s -o /dev/null -w "%{http_code}\n" -X PUT http://localhost:1337/api/chapte
   -d "{\"chapterSlug\":\"$FOREIGN\",\"partners\":[]}"
 ```
 
-Expected: `400`, `400`, `403`.
+Expected: `400`, `400`, an unchanged partner name, `403`.
 
-- [ ] **Step 7: Stop the servers and confirm both trees are clean**
+- [ ] **Step 8: Restore the microsite, stop the servers, confirm clean**
 
 ```bash
 pkill -f "strapi develop" ; pkill -f "astro dev" ; sleep 2
+cd /Users/nk/Projects/AREAA/areaa-cms && \
+  sqlite3 .tmp/data.db "SELECT partner_group_id, group_concat(partner_id, ',') FROM (SELECT * FROM components_shared_partner_groups_partners_lnk ORDER BY partner_group_id, partner_ord) GROUP BY partner_group_id;" > /tmp/p4-walk-after.txt && \
+  diff /tmp/p4-walk-before.txt /tmp/p4-walk-after.txt || \
+  echo "^ The walkthrough changed live microsite content. Re-attach the original partners through the UI before finishing."
 cd /Users/nk/Projects/AREAA/areaa-frontend && git status --short
 cd /Users/nk/Projects/AREAA/areaa-cms && git status --short
 ```
 
-Expected: clean in both, no processes left. **Also restore anything the walkthrough changed** — the partner selections in rows 2–3 are real sponsor lists on a real chapter.
+Expected: no diff, clean in both, no processes left. If the diff is non-empty, use the Step 2 snapshot to restore the original selection **through the UI** — the walkthrough is the only part of this plan that mutates real content without an automatic restore.
 
 ---
 
 ## Done when
 
-- **159 CMS and 59 frontend tests green**, CMS twice in a row with **no row-count growth**, including `chapters_partners_lnk`.
-- A chapter admin can attach and detach partners with JavaScript disabled, and **unchecking everything genuinely detaches everything**.
-- `partners: null`, an unknown partner id, and another chapter's slug each return **400 / 400 / 403** — never a silent detach.
-- **A Partner record is never written.** Sending `{documentId, name}` changes no partner's name.
-- `GET /chapter-admin/{events,committees,news}/:documentId` returns the record with its edit-screen relations, 404s a record from another administered chapter when `chapterSlug` names this one, and 403s one from a chapter the caller does not administer.
-- The committee and news lists are scoped **server-side**: no page renders zero rows while claiming more pages exist.
-- Every existing import of `../lib/chapter-admin` still resolves after the split — **no page imports were edited to accommodate it**, except `events/[documentId].astro` gaining `getEvent`'s third argument.
+- **168 CMS and 63 frontend tests green**, CMS twice in a row with **no row growth and no sponsor reordering**.
+- A chapter admin can choose which partners appear on their microsite, with JavaScript disabled, and **the public page reflects it** — both when adding and when removing all.
+- The submitted **order** is what the microsite renders.
+- `partners: null`, an unknown partner id, and another chapter's slug return **400 / 400 / 403**; a `{documentId, name}` smuggle leaves the Partner's name unchanged.
+- A chapter with **no home page** gets a 404 explaining why, not an obscure failure.
+- **No component on a non-chapter page is ever written.**
+- The partners screen renders **no picker and no Save button** whenever it cannot read both the catalogue and the current selection.
+- `GET /chapter-admin/{events,committees,news}/:documentId` returns the record with its edit-screen relations, 404s a record from another administered chapter when `chapterSlug` names this one, 403s one from an unadministered chapter, and **404s a chapterless record rather than confirming it exists**.
+- The committee, news and events lists are scoped **server-side**; no page renders zero rows while claiming more pages exist, and the events list can display an error.
+- Every existing import of `../lib/chapter-admin` still resolves after the split.
 - `/account?error=not-chapter-admin` explains itself.
-- `tests/unit/grants.test.js` passes and fails on a misspelled grant.
+- `tests/unit/grants.test.js` passes.
 
 ## Not in this plan
 
-- **`/page`** — the fixed-template microsite editor and its dynamic-zone positional merge. **Plan 5, alone.**
+- **`/page`** — the fixed-template microsite editor and its dynamic-zone positional merge. **Plan 5, alone.** This plan writes a relation *inside* one component and never touches the zone; `/page` rewrites the zone itself.
 - **TipTap and the real blocks converters.** Plan 6.
 - **Wiring the contact form to capture submissions.** Filed as `2026-08-04-contact-form-sends-nothing.md`.
-- **Splitting the controller.** It reaches ~260 lines with partners. Plan 3's Known limitations argue for `services/chapter-settings.js` and `services/submissions.js`; deferred again because plan 5 will move `/page` logic into a service anyway, and doing both splits at once is one reviewable change rather than two.
+- **Splitting the controller.** ~280 lines with partners. Plan 5 will move `/page` logic into a service anyway; doing both splits at once is one reviewable change rather than two.
+- **A `chapter.partners` reader.** The relation still exists and this plan leaves it alone. It is now definitively write-only — nothing sets it, nothing reads it. Removing it is a schema migration, and belongs with whoever next touches the chapter model.
 
 ## Known limitations, accepted
 
+- **`chapter.partners` is dead weight.** Plans 1–3 assumed it was the partner store; it never was. This plan writes the component relation instead and leaves the field in place rather than shipping a migration. Anyone reading the spec's API table will still find it described as the mechanism — the spec is wrong there, and this plan's revision note is the record of why.
+- **The committee list still truncates at 100** with no pagination UI (`pageSize=100`, `MAX_PAGE_SIZE=100`). Task 2 makes that limit per-chapter rather than shared across all administered chapters — strictly better, but still a cap. Carried forward from plan 3, still unpaid. `listCommittees` discards `meta`, so the page cannot even say "showing the first 100 of N".
+- **No CSRF token**, and this plan adds a sixth form POST. Astro's native `checkOrigin` covers it, as with every other form on the site.
+- **`listPartners` reads the catalogue at `status: 'draft'`**, so a partner national has created but never published would be offered and then not render publicly. Not reachable with the current seed; worth knowing.
+- **No search on the partner picker**, as with members. Fine for a national catalogue of a handful; not for dozens.
 - **`listSubmissions` still hardcodes `limit: 200`** with no pagination. Invisible while the contact form writes nothing.
-- **The member and partner pickers have no search.** A chapter with several hundred members, or a national catalogue of dozens of sponsors, will want filtering. `MultiSelect` scrolls at 260px, so the page stays usable; finding a specific entry does not.
-- **`listAttachedPartners` costs a second round trip** to `/chapter?include=partners` rather than being returned by `/partners`. Keeps the catalogue endpoint chapter-independent and cacheable later; revisit if the screen feels slow.
-- **Detaching a partner does not check whether the microsite's `partner-group` slot references it.** The slot renders from the chapter relation, so it simply shows fewer partners — but plan 5 introduces a stored relation on the component itself, and the two can then disagree. Resolve it there.
-- **Partner ordering is the catalogue's, alphabetical by name.** Sponsorship level is shown but not sorted on, so Platinum sponsors do not float to the top of the picker.
+- **`publishedDate` is free text**, `listMembers` requires `confirmed` while `assertMembersInChapter` does not, committee membership is not re-validated on read, and `form-submission.chapter` is optional. All unchanged from plan 3.
