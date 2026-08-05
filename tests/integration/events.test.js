@@ -29,6 +29,24 @@ afterAll(async () => {
   for (const e of junk) {
     await strapi.documents('api::event.event').delete({ documentId: e.documentId });
   }
+
+  // Fixture users accumulate otherwise, and the suite stays green while
+  // up_users grows every run — a leak does not change any test count. These
+  // carry no `chapter`, so they are invisible to the member directory today;
+  // that is luck, not design.
+  const users = await strapi.query('plugin::users-permissions.user')
+    .findMany({ where: { email: { $contains: String(RUN) } } });
+  for (const u of users) {
+    await strapi.query('plugin::users-permissions.user').delete({ where: { id: u.id } });
+  }
+
+  // The media tests upload three images per run and delete none.
+  const uploads = await strapi.query('plugin::upload.file')
+    .findMany({ where: { name: { $in: ['ok.png', 'evil.png', 'figure.png'] } } });
+  for (const f of uploads) {
+    await strapi.plugin('upload').service('upload').remove(f);
+  }
+
   await shutdown();
 });
 
