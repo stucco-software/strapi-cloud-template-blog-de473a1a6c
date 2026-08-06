@@ -54,6 +54,8 @@ const CHAPTER_ADMIN_GRANTS = [
   'api::chapter-admin.chapter-admin.getChapter',
   'api::chapter-admin.chapter-admin.updateChapter',
 
+  'api::chapter-admin.chapter-admin.listPartners',
+  'api::chapter-admin.chapter-admin.updatePartners',
   'api::chapter-admin.chapter-admin.listSubmissions',
   'api::chapter-admin.chapter-admin.updateSubmission',
 ];

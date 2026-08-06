@@ -13,6 +13,9 @@ const {
   toDirectoryRow, normaliseMemberIds, assertMembersInChapter,
 } = require('../services/members');
 const { uploadImage } = require('../services/media');
+const {
+  toPartnerRow, normalisePartnerIds, findPartnerGroups,
+} = require('../services/partners');
 
 // Mirrors api::event.event minus `chapter` and `slug`, both set at create and
 // immutable after.
@@ -216,5 +219,94 @@ module.exports = {
     ctx.body = { data: await strapi.documents('api::form-submission.form-submission').update({
       documentId, data: { handled: Boolean(input.handled) },
     }) };
+  }),
+
+  // --- partners ----------------------------------------------------------
+  // Partner records are SHARED and are never written here (CA7): a Partner row
+  // appears on every chapter that uses it. This endpoint reads the catalogue
+  // and writes the chapter home page's partner-group component relation —
+  // which is what the public microsite actually renders. `chapter.partners`
+  // exists but has no reader; see the plan's revision note.
+  listPartners: guarded(async (ctx) => {
+    // Scope-checked even though the catalogue is global: the screen belongs to
+    // a chapter, and answering for one the caller cannot administer would leak
+    // which chapters exist.
+    const { chapter, error, notFound } = await resolveScopedChapter(ctx, ctx.query.chapterSlug);
+    if (error) return notFound ? ctx.notFound(error) : ctx.badRequest(error);
+
+    const rows = await strapi.documents('api::partner.partner').findMany({
+      fields: ['name', 'sponsorshipLevel'],
+      populate: { logo: { fields: ['url'] } },
+      sort: ['name:asc'],
+      limit: -1,
+      status: 'draft',
+    });
+
+    // The chapter's current selection, read off the DRAFT component so it
+    // matches what a subsequent save will replace.
+    // findPartnerGroups guarantees a draft slot whenever it returns no error,
+    // so `attached` is never silently [] while a slot exists somewhere.
+    const found = await findPartnerGroups(strapi, chapter.slug);
+    let attached = [];
+    if (!found.error) {
+      const cmp = await strapi.db.query('shared.partner-group').findOne({
+        where: { id: found.groups.draft }, populate: { partners: true },
+      });
+      attached = (cmp?.partners ?? []).map((p) => p.documentId);
+    }
+
+    ctx.body = {
+      data: rows.map(toPartnerRow),
+      meta: { attached, slot: found.error ?? 'ok' },
+    };
+  }),
+
+  updatePartners: guarded(async (ctx) => {
+    const input = ctx.request.body?.data ?? ctx.request.body ?? {};
+    const { chapter, error, notFound } = await resolveScopedChapter(ctx, input.chapterSlug);
+    if (error) return notFound ? ctx.notFound(error) : ctx.badRequest(error);
+
+    const ids = normalisePartnerIds(input.partners);   // BadInputError -> 400
+
+    // Every id must name a real partner. A documentId matching nothing would be
+    // silently dropped by the relation write, so the admin would watch a
+    // partner vanish with no explanation.
+    if (ids.length > 0) {
+      const found = await strapi.documents('api::partner.partner').findMany({
+        filters: { documentId: { $in: ids } }, fields: ['name'], limit: -1, status: 'draft',
+      });
+      if (found.length !== ids.length) {
+        return ctx.badRequest('One or more selected partners no longer exist');
+      }
+    }
+
+    const located = await findPartnerGroups(strapi, chapter.slug);
+    if (located.error === 'no-home-page') {
+      return ctx.notFound('This chapter has no microsite page yet, so there is nowhere to show partners');
+    }
+    if (located.error === 'no-partner-group') {
+      return ctx.notFound("This chapter's page has no partners section");
+    }
+
+    // Write BOTH component rows, resolving partner documentIds to entry ids at
+    // the MATCHING status — verified: draft components link to draft partner
+    // rows (id 61), published components to published rows (id 62). Getting
+    // this wrong links to the correct partner in the wrong publication state.
+    for (const [status, componentId] of Object.entries(located.groups)) {
+      const rows = ids.length
+        ? await strapi.documents('api::partner.partner').findMany({
+            filters: { documentId: { $in: ids } }, fields: ['name'], limit: -1, status,
+          })
+        : [];
+      const byDoc = new Map(rows.map((r) => [r.documentId, r.id]));
+      // Map in the SUBMITTED order — partner_ord follows the write order.
+      const entryIds = ids.map((d) => byDoc.get(d)).filter((v) => v !== undefined);
+
+      await strapi.db.query('shared.partner-group').update({
+        where: { id: componentId }, data: { partners: entryIds },
+      });
+    }
+
+    ctx.body = { data: { chapterSlug: chapter.slug, attached: ids.length } };
   }),
 };
