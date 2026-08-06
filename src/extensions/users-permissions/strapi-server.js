@@ -54,6 +54,16 @@ const DIRECTORY_FIELDS = [
 const DIRECTORY_MAX_PAGE_SIZE = 50;
 const DIRECTORY_DEFAULT_PAGE_SIZE = 12;
 
+// Whitelisted sort modes (§3.1.6.7 — sort by name/location). The public `sort`
+// param maps to a fixed order; anything unrecognized falls back to name. Every
+// option ends in name order so paging stays deterministic on ties. (Relevance
+// ranking is Phase B — it needs a scored query the document service can't express.)
+const DIRECTORY_SORTS = {
+  name: ['lastName:asc', 'firstName:asc'],
+  location: ['location:asc', 'lastName:asc', 'firstName:asc'],
+};
+const DIRECTORY_DEFAULT_SORT = 'name';
+
 // Query params can arrive as string | string[] (repeated keys). Take the first.
 const firstStr = (v) => (Array.isArray(v) ? v[0] : v ?? '').toString().trim();
 
@@ -220,14 +230,18 @@ module.exports = (plugin) => {
       DIRECTORY_MAX_PAGE_SIZE,
       Math.max(1, parseInt(firstStr(query.pageSize), 10) || DIRECTORY_DEFAULT_PAGE_SIZE)
     );
+    const sort = DIRECTORY_SORTS[firstStr(query.sort)] || DIRECTORY_SORTS[DIRECTORY_DEFAULT_SORT];
 
     const docs = strapi.documents('plugin::users-permissions.user');
     const [rows, total] = await Promise.all([
       docs.findMany({
         filters,
         fields: DIRECTORY_FIELDS,
-        populate: { chapter: { fields: ['name', 'slug'] } },
-        sort: ['lastName:asc', 'firstName:asc'],
+        populate: {
+          chapter: { fields: ['name', 'slug'] },
+          image: { fields: ['url', 'alternativeText'] },
+        },
+        sort,
         limit: pageSize,
         start: (pageNum - 1) * pageSize,
       }),
@@ -244,6 +258,9 @@ module.exports = (plugin) => {
         company: u.company ?? '',
         designations: u.designations ?? '',
         title: u.title ?? '',
+        image: u.image
+          ? { url: u.image.url, alt: u.image.alternativeText ?? '' }
+          : null,
         chapter: u.chapter
           ? { name: u.chapter.name, slug: u.chapter.slug }
           : null,
