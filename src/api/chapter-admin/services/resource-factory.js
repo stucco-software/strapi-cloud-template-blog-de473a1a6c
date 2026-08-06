@@ -8,6 +8,16 @@ const DEFAULT_PAGE_SIZE = 25;
 const MAX_PAGE_SIZE = 100;
 
 /**
+ * Query params can arrive as string | string[]; take the first.
+ *
+ * A third copy — `controllers/chapter-admin.js` and the users-permissions
+ * extension each have one. Deliberate for now: this is a service, and importing
+ * from a controller would invert the dependency. Worth collapsing into its own
+ * module the moment a fourth caller appears.
+ */
+const firstStr = (v) => (Array.isArray(v) ? v[0] : v ?? '').toString().trim();
+
+/**
  * Build the CRUD handler set for a content type owned by a chapter.
  *
  * All chapter identity is `documentId`, never the numeric entry id — `chapter`
@@ -41,8 +51,8 @@ const MAX_PAGE_SIZE = 100;
  */
 function chapterScopedResource({
   uid, editableFields, hasSlug = false, listFields = null, listPopulate = null,
-  requiredFields = [], deriveOnCreate = null, validateData = null,
-  strapiInstance = null,
+  getOnePopulate = null, requiredFields = [], deriveOnCreate = null,
+  validateData = null, strapiInstance = null,
 }) {
   if (editableFields.includes('chapter') || editableFields.includes('slug')) {
     // A misconfiguration here silently reopens chapter reassignment. Fail at load.
@@ -94,6 +104,43 @@ function chapterScopedResource({
   }
 
   return {
+    /**
+     * One record by documentId, scope-checked.
+     *
+     * Replaces the client-side "fetch a page and .find() it", which silently
+     * stopped finding anything past the 100th record.
+     *
+     * `chapterSlug` is optional but the pages always send it: a caller may
+     * administer several chapters, and answering /chapter/A/…/<B's-id> with B's
+     * record is how a cross-chapter edit screen became reachable in plan 3.
+     */
+    async getOne(ctx) {
+      const administered = await resolveAdministeredChapters(ctx, s());
+      const { documentId } = ctx.params;
+
+      // getOnePopulate defaults to listPopulate. The edit screen needs at least
+      // what the list needs, and hand-written copies byte-identical to the
+      // listPopulate blocks would drift the first time someone added a relation
+      // to one and not the other.
+      const record = await docs().findOne({
+        documentId,
+        populate: { chapter: { fields: ['name', 'slug'] }, ...(getOnePopulate ?? listPopulate ?? {}) },
+        status: 'draft',
+      });
+      if (!record) return ctx.notFound();
+
+      // A chapterless record (national content) is a 404, not a 403 — a 403
+      // would confirm to a caller who may not see it that the record exists.
+      if (!record.chapter) return ctx.notFound();
+
+      assertChapterScope(administered, record.chapter.documentId);
+
+      const wanted = firstStr(ctx.query?.chapterSlug);
+      if (wanted && record.chapter.slug !== wanted) return ctx.notFound();
+
+      ctx.body = { data: record };
+    },
+
     async list(ctx) {
       const administered = await resolveAdministeredChapters(ctx, s());
       if (administered.length === 0) return ctx.forbidden('No administered chapters');

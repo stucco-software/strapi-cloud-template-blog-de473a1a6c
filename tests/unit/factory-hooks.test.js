@@ -124,3 +124,81 @@ describe('validateData', () => {
     expect(s.calls.create[0].data.members).toEqual([{ documentId: 'm1' }]);
   });
 });
+
+describe('getOne', () => {
+  const res = (s, extra = {}) => chapterScopedResource({
+    uid: 'api::committee.committee', editableFields: ['name'],
+    strapiInstance: s, ...extra,
+  });
+
+  it('returns a record in an administered chapter', async () => {
+    const s = fakeStrapi();
+    const ctx = makeCtx({}, { documentId: 'r-1' });
+    await res(s).getOne(ctx);
+    expect(ctx.body.data.documentId).toBe('r-1');
+  });
+
+  it('404s a record that does not exist', async () => {
+    const s = fakeStrapi({ stored: null });
+    const ctx = makeCtx({}, { documentId: 'nope' });
+    await res(s).getOne(ctx);
+    expect(ctx.notFound).toHaveBeenCalled();
+  });
+
+  it('404s — does NOT 403 — a record with no chapter at all', async () => {
+    // `chapter` is not required on event/news/committee, and the real database
+    // holds national content with none. A 403 here would make this new read
+    // surface an existence oracle: 403 means it exists, 404 means it does not.
+    const s = fakeStrapi({ stored: { documentId: 'r-1', chapter: null } });
+    const ctx = makeCtx({}, { documentId: 'r-1' });
+    await res(s).getOne(ctx);
+    expect(ctx.notFound).toHaveBeenCalled();
+  });
+
+  it('403s a record in a chapter the caller does not administer', async () => {
+    const s = fakeStrapi({ stored: { documentId: 'r-1', chapter: { documentId: 'chap-z', slug: 'seattle' } } });
+    await expect(res(s).getOne(makeCtx({}, { documentId: 'r-1' })))
+      .rejects.toThrow(/not administered/);
+  });
+
+  it('404s when chapterSlug names a different chapter than the record is in', async () => {
+    const s = fakeStrapi();                 // stored record is in chap-a / boston
+    const ctx = makeCtx({}, { documentId: 'r-1' });
+    ctx.query = { chapterSlug: 'seattle' };
+    await res(s).getOne(ctx);
+    expect(ctx.notFound).toHaveBeenCalled();
+  });
+
+  it('applies getOnePopulate so the edit screen gets its relations', async () => {
+    const s = fakeStrapi();
+    const seen = [];
+    const orig = s.documents;
+    // Gated on uid: resolveAdministeredChapters reads the USER first, so an
+    // ungated spy asserts against the wrong call.
+    s.documents = (uid) => {
+      const d = orig(uid);
+      if (uid !== 'api::committee.committee') return d;
+      return { ...d, findOne: async (args) => { seen.push(args); return d.findOne(args); } };
+    };
+    await res(s, { getOnePopulate: { members: { fields: ['firstName'] } } })
+      .getOne(makeCtx({}, { documentId: 'r-1' }));
+    expect(seen[0].populate).toHaveProperty('members');
+    expect(seen[0].populate).toHaveProperty('chapter');   // always merged
+  });
+
+  it('falls back to listPopulate when getOnePopulate is unset', async () => {
+    // The edit screen needs at least what the list needs. Without this, adding
+    // a relation to listPopulate alone silently leaves the edit form blank.
+    const s = fakeStrapi();
+    const seen = [];
+    const orig = s.documents;
+    s.documents = (uid) => {
+      const d = orig(uid);
+      if (uid !== 'api::committee.committee') return d;
+      return { ...d, findOne: async (args) => { seen.push(args); return d.findOne(args); } };
+    };
+    await res(s, { listPopulate: { figure: { fields: ['url'] } } })
+      .getOne(makeCtx({}, { documentId: 'r-1' }));
+    expect(seen[0].populate).toHaveProperty('figure');
+  });
+});
