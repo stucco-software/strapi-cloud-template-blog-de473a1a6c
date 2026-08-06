@@ -12,6 +12,7 @@
 module.exports = {
   routes: [
     { method: 'GET',    path: '/chapter-admin/events',              handler: 'chapter-admin.listEvents' },
+    { method: 'GET',    path: '/chapter-admin/events/:documentId',  handler: 'chapter-admin.getEvent' },
     { method: 'POST',   path: '/chapter-admin/events',              handler: 'chapter-admin.createEvent' },
     { method: 'PUT',    path: '/chapter-admin/events/:documentId',  handler: 'chapter-admin.updateEvent' },
     { method: 'DELETE', path: '/chapter-admin/events/:documentId',  handler: 'chapter-admin.deleteEvent' },
@@ -20,11 +21,13 @@ module.exports = {
     { method: 'GET',    path: '/chapter-admin/members',             handler: 'chapter-admin.listMembers' },
 
     { method: 'GET',    path: '/chapter-admin/committees',              handler: 'chapter-admin.listCommittees' },
+    { method: 'GET',    path: '/chapter-admin/committees/:documentId',  handler: 'chapter-admin.getCommittee' },
     { method: 'POST',   path: '/chapter-admin/committees',              handler: 'chapter-admin.createCommittee' },
     { method: 'PUT',    path: '/chapter-admin/committees/:documentId',  handler: 'chapter-admin.updateCommittee' },
     { method: 'DELETE', path: '/chapter-admin/committees/:documentId',  handler: 'chapter-admin.deleteCommittee' },
 
     { method: 'GET',    path: '/chapter-admin/news',                    handler: 'chapter-admin.listNews' },
+    { method: 'GET',    path: '/chapter-admin/news/:documentId',        handler: 'chapter-admin.getNewsItem' },
     { method: 'POST',   path: '/chapter-admin/news',                    handler: 'chapter-admin.createNews' },
     { method: 'PUT',    path: '/chapter-admin/news/:documentId',        handler: 'chapter-admin.updateNews' },
     { method: 'DELETE', path: '/chapter-admin/news/:documentId',        handler: 'chapter-admin.deleteNews' },

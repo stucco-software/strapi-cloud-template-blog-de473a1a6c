@@ -30,6 +30,7 @@ const AUTHENTICATED_GRANTS = [
 const CHAPTER_ADMIN_GRANTS = [
   ...AUTHENTICATED_GRANTS,
 
+  'api::chapter-admin.chapter-admin.getEvent',
   'api::chapter-admin.chapter-admin.listEvents',
   'api::chapter-admin.chapter-admin.createEvent',
   'api::chapter-admin.chapter-admin.updateEvent',
@@ -38,11 +39,13 @@ const CHAPTER_ADMIN_GRANTS = [
 
   'api::chapter-admin.chapter-admin.listMembers',
 
+  'api::chapter-admin.chapter-admin.getCommittee',
   'api::chapter-admin.chapter-admin.listCommittees',
   'api::chapter-admin.chapter-admin.createCommittee',
   'api::chapter-admin.chapter-admin.updateCommittee',
   'api::chapter-admin.chapter-admin.deleteCommittee',
 
+  'api::chapter-admin.chapter-admin.getNewsItem',
   'api::chapter-admin.chapter-admin.listNews',
   'api::chapter-admin.chapter-admin.createNews',
   'api::chapter-admin.chapter-admin.updateNews',

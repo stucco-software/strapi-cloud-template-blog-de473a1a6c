@@ -98,6 +98,7 @@ async function resolveScopedChapter(ctx, rawSlug) {
 }
 
 module.exports = {
+  getEvent: guarded(events.getOne),
   listEvents: guarded(events.list),
   createEvent: guarded(events.create),
   updateEvent: guarded(events.update),
@@ -119,11 +120,13 @@ module.exports = {
     }
   },
 
+  getCommittee: guarded(committees.getOne),
   listCommittees: guarded(committees.list),
   createCommittee: guarded(committees.create),
   updateCommittee: guarded(committees.update),
   deleteCommittee: guarded(committees.delete),
 
+  getNewsItem: guarded(news.getOne),
   listNews: guarded(news.list),
   createNews: guarded(news.create),
   updateNews: guarded(news.update),
