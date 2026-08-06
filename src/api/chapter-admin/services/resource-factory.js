@@ -149,7 +149,23 @@ function chapterScopedResource({
       const pageSize = Math.min(MAX_PAGE_SIZE,
         Math.max(1, parseInt(ctx.query.pageSize, 10) || DEFAULT_PAGE_SIZE));
 
-      const filters = { chapter: { documentId: { $in: administered } } };
+      // Optional single-chapter narrowing. Without it the pages must filter
+      // client-side AFTER pagination, so pageCount describes a larger set than
+      // the rows shown — a multi-chapter admin sees "page 2 of 3" render
+      // nothing. The bare `{documentId: 'x'}` shorthand is equivalent to $eq
+      // (verified) — no operator needed.
+      const wanted = firstStr(ctx.query?.chapterSlug);
+      let scope = { documentId: { $in: administered } };
+      if (wanted) {
+        const chapter = await s().documents('api::chapter.chapter').findFirst({
+          filters: { slug: wanted }, fields: ['slug'], status: 'draft',
+        });
+        if (!chapter) return ctx.notFound('No such chapter');
+        assertChapterScope(administered, chapter.documentId);
+        scope = { documentId: chapter.documentId };
+      }
+
+      const filters = { chapter: scope };
       const [rows, total] = await Promise.all([
         docs().findMany({
           filters,

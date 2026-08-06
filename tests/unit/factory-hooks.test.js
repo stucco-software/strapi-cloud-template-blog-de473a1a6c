@@ -19,7 +19,13 @@ function fakeStrapi({ stored = { documentId: 'r-1', chapter: CHAP } } = {}) {
         return { findOne: async () => ({ administeredChapters: [CHAP] }) };
       }
       if (uid === 'api::chapter.chapter') {
-        return { findFirst: async ({ filters }) => (filters.slug === CHAP.slug ? CHAP : null) };
+        // CHAP is administered; OTHER exists but is not. Without OTHER the 403
+        // branch is unreachable — an unknown slug 404s before the scope check.
+        const OTHER = { id: 56, documentId: 'chap-z', slug: 'seattle' };
+        return {
+          findFirst: async ({ filters }) =>
+            [CHAP, OTHER].find((c) => c.slug === filters.slug) ?? null,
+        };
       }
       return {
         findOne: async () => stored,
@@ -200,5 +206,52 @@ describe('getOne', () => {
     await res(s, { listPopulate: { figure: { fields: ['url'] } } })
       .getOne(makeCtx({}, { documentId: 'r-1' }));
     expect(seen[0].populate).toHaveProperty('figure');
+  });
+});
+
+describe('list scoping', () => {
+  const spy = () => {
+    const seen = [];
+    const s = fakeStrapi();
+    const orig = s.documents;
+    s.documents = (uid) => {
+      const d = orig(uid);
+      if (uid !== 'api::committee.committee') return d;
+      return { ...d, findMany: async (a) => { seen.push(a); return []; }, count: async () => 0 };
+    };
+    return { s, seen };
+  };
+
+  const res = (s) => chapterScopedResource({
+    uid: 'api::committee.committee', editableFields: ['name'], strapiInstance: s,
+  });
+
+  it('spans every administered chapter when no chapterSlug is given', async () => {
+    const { s, seen } = spy();
+    await res(s).list(makeCtx());
+    expect(seen[0].filters.chapter).toEqual({ documentId: { $in: ['chap-a'] } });
+  });
+
+  it('narrows to ONE chapter when chapterSlug is given', async () => {
+    const { s, seen } = spy();
+    const ctx = makeCtx();
+    ctx.query = { chapterSlug: 'boston' };
+    await res(s).list(ctx);
+    expect(seen[0].filters.chapter).toEqual({ documentId: 'chap-a' });
+  });
+
+  it('403s a chapterSlug that EXISTS but is not administered', async () => {
+    const { s } = spy();
+    const ctx = makeCtx();
+    ctx.query = { chapterSlug: 'seattle' };
+    await expect(res(s).list(ctx)).rejects.toThrow(/not administered/);
+  });
+
+  it('404s a chapterSlug that does not exist at all', async () => {
+    const { s } = spy();
+    const ctx = makeCtx();
+    ctx.query = { chapterSlug: 'atlantis' };
+    await res(s).list(ctx);
+    expect(ctx.notFound).toHaveBeenCalled();
   });
 });
