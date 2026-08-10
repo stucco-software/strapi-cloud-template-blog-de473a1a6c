@@ -938,10 +938,14 @@ const {
     // would rewrite the page's headline at both statuses and return 200.
     // Verified reachable: {index: null} rewrote the hero. The client-side
     // mapper guards this too, but the server is the boundary.
-    if (typeof input.index !== 'number' && typeof input.index !== 'string') {
-      return ctx.badRequest('No such section on this page');
-    }
-    const index = Number(input.index);
+    // An empty or blank string is the trap: it passes a bare typeof check and
+    // Number('') is 0, which is the hero. Reject it explicitly.
+    const rawIndex = input.index;
+    const indexIsUsable =
+      typeof rawIndex === 'number' ||
+      (typeof rawIndex === 'string' && rawIndex.trim() !== '');
+    if (!indexIsUsable) return ctx.badRequest('No such section on this page');
+    const index = Number(rawIndex);
     if (!Number.isInteger(index) || index < 0) {
       return ctx.badRequest('No such section on this page');
     }
