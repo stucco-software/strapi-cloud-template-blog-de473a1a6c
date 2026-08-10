@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const {
   EDITABLE_BY_TYPE, editableFieldsFor, isPlainBlocks, textToBlocks, blocksToText,
-  shapeComponentEdit, pairZones, sameForFields,
+  shapeComponentEdit, pairZones, sameForFields, findPageZones,
 } = require('../../src/api/chapter-admin/services/page-content.js');
 const { BadInputError } = require('../../src/api/chapter-admin/services/fields.js');
 
@@ -281,5 +281,83 @@ describe('pairZones', () => {
     expect(pairZones(d, null)).toEqual([
       { draftId: 100, publishedId: null, type: 'shared.hero', index: 0 },
     ]);
+  });
+});
+
+describe('findPageZones', () => {
+  const cmp = (type, id) => ({ __component: type, id });
+  // HONOURS the filters. A stub that ignores them cannot catch a lookup that
+  // drops `chapter: { slug }` or asks for the wrong page, and the first version
+  // of this plan shipped exactly that: removing the chapter filter left all
+  // five tests passing.
+  const stub = (pages, seen = []) => ({
+    seen,
+    documents: (uid) => ({
+      findFirst: async ({ filters, status }) => {
+        seen.push({ uid, filters, status });
+        if (uid !== 'api::page.page') return null;
+        if (filters?.slug !== 'home') return null;
+        if (filters?.chapter?.slug !== pages.__slug) return null;
+        return pages[status] ?? null;
+      },
+    }),
+  });
+
+  it('reports no-home-page when neither status has one', async () => {
+    // `pdx` is this chapter today.
+    expect(await findPageZones(stub({ __slug: 'pdx' }), 'pdx')).toEqual({ error: 'no-home-page' });
+  });
+
+  it('asks for THIS chapter\'s home page, not just any home page', async () => {
+    const seen = [];
+    await findPageZones(stub({ __slug: 'aloha-hawaii' }, seen), 'aloha-hawaii');
+    expect(seen.length).toBeGreaterThan(0);
+    for (const call of seen) {
+      expect(call.uid).toBe('api::page.page');
+      expect(call.filters.slug).toBe('home');
+      expect(call.filters.chapter.slug).toBe('aloha-hawaii');
+    }
+  });
+
+  it('returns paired components when both zones agree', async () => {
+    const res = await findPageZones(stub({
+      __slug: 'aloha-hawaii',
+      draft: { documentId: 'pg1', components: [cmp('shared.hero', 3)] },
+      published: { documentId: 'pg1', components: [cmp('shared.hero', 4)] },
+    }), 'aloha-hawaii');
+    expect(res.pairs).toEqual([
+      { draftId: 3, publishedId: 4, type: 'shared.hero', index: 0 },
+    ]);
+    expect(res.structureDiverged).toBe(false);
+  });
+
+  it('flags divergence and falls back to draft-only pairing', async () => {
+    // The admin restructured the draft and did not publish. Writing published
+    // by position would put the hero's text into the gallery.
+    const res = await findPageZones(stub({
+      __slug: 'aloha-hawaii',
+      draft: { documentId: 'pg1', components: [cmp('shared.hero', 3), cmp('shared.gallery', 9)] },
+      published: { documentId: 'pg1', components: [cmp('shared.gallery', 4)] },
+    }), 'aloha-hawaii');
+    expect(res.structureDiverged).toBe(true);
+    expect(res.pairs.every((p) => p.publishedId === null)).toBe(true);
+  });
+
+  it('pairs draft-only for a page that has never been published', async () => {
+    const res = await findPageZones(stub({
+      __slug: 'greater-chicago',
+      draft: { documentId: 'pg1', components: [cmp('shared.hero', 3)] },
+    }), 'greater-chicago');
+    expect(res.pairs[0].publishedId).toBeNull();
+    expect(res.structureDiverged).toBe(false);   // not a divergence, just unpublished
+  });
+
+  it('requires the DRAFT zone, mirroring plan 4', async () => {
+    // Published-only would mean editing against a zone the admin cannot see,
+    // which is the shape of the bug plan 4's review caught in findPartnerGroups.
+    expect(await findPageZones(stub({
+      __slug: 'aloha-hawaii',
+      published: { documentId: 'pg1', components: [cmp('shared.hero', 4)] },
+    }), 'aloha-hawaii')).toEqual({ error: 'no-home-page' });
   });
 });

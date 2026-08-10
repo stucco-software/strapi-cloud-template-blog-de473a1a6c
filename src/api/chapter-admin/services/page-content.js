@@ -205,7 +205,41 @@ function pairZones(draft, published) {
   }));
 }
 
+/**
+ * The chapter's home page zone at both statuses, paired.
+ *
+ * The DRAFT zone is required — it is the editing surface, and plan 4's review
+ * found the equivalent published-only path in `findPartnerGroups` was a live
+ * data-loss bug. `structureDiverged` distinguishes "never published" (fine,
+ * write draft only) from "draft restructured without publishing" (write draft
+ * only AND tell the admin why the live site will not change).
+ */
+async function findPageZones(strapiInstance, chapterSlug) {
+  const load = (status) => strapiInstance.documents('api::page.page').findFirst({
+    filters: { slug: 'home', chapter: { slug: chapterSlug } },
+    populate: { components: true },
+    status,
+  });
+
+  const draft = await load('draft');
+  if (!draft) return { error: 'no-home-page' };
+  const published = await load('published');
+
+  const paired = pairZones(draft.components ?? [], published?.components ?? null);
+
+  if (paired === null) {
+    // Shapes differ. Degrade to draft-only rather than guessing an alignment.
+    return {
+      pageDocumentId: draft.documentId,
+      pairs: pairZones(draft.components ?? [], null),
+      structureDiverged: true,
+    };
+  }
+  return { pageDocumentId: draft.documentId, pairs: paired, structureDiverged: false };
+}
+
 module.exports = {
   EDITABLE_BY_TYPE, editableFieldsFor, isPlainBlocks, textToBlocks, blocksToText,
-  shapeComponentEdit, pairZones, sameForFields, MAX_BODY_LEN, MAX_TEXT_LEN,
+  shapeComponentEdit, pairZones, sameForFields, findPageZones,
+  MAX_BODY_LEN, MAX_TEXT_LEN,
 };
