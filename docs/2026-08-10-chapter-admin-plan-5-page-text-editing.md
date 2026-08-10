@@ -4,7 +4,13 @@
 
 **Goal:** Let a chapter admin edit the **text** on their microsite — section headings, body copy, the contact form's intro — without being able to reorder, add, remove, or otherwise restructure the page.
 
-**Architecture:** No dynamic zone is ever written. Each save updates **one component row by id**, at both draft and published status, exactly as plan 4 does for the partner-group relation. `page.components` is never assigned, so replace-on-write cannot bite. Draft and published components are paired by **position within the zone**, guarded by a type-sequence check that refuses the published write when the two zones have diverged.
+**Architecture:** No dynamic zone is ever written. Each save updates **one component row by id**, at both draft and published status, exactly as plan 4 does for the partner-group relation. `page.components` is never assigned, so replace-on-write cannot bite.
+
+Draft and published components are paired by **position within the zone**, and position alone is not trustworthy. A type-sequence check catches structural divergence, but it is **strictly weaker than it sounds**: same length plus same type sequence plus different components is undetectable, and a chapter zone holds three consecutive `shared.member-group` components, so a same-type reorder produces a wrong-but-plausible pairing. That was reproduced against the real database — an admin edited "Board of Directors" and the public site's "Executive Committee" heading changed, reporting full success.
+
+So the published write is gated on **content parity**, not on structure: before writing the published row, its current values for the fields being written must equal the **pre-edit draft** values. If they differ, the two rows are not the same component — or they are the same component carrying an unpublished national edit — and in both cases writing published is wrong. The write then reaches the draft alone and reports `wrote: 1`, which the screen surfaces as "your live page has not changed".
+
+This single guard closes three separate defects: the same-type reorder above; a draft-only edit by national being silently published by a chapter admin's unrelated save; and a rich published body being flattened because the guard read the draft.
 
 **Tech Stack:** Strapi 5.45.1 (CJS services, `db.query` for component rows), Astro 6.4.2 (SSR, `experimental_AstroContainer` for render tests), Vitest, supertest.
 
@@ -57,7 +63,12 @@ Position still matters in one place — **pairing** a draft component with its p
 
 `api::chapter-admin%` permissions: **23**.
 
-**Plan 5 and plan 7 are independent and touch no common file.** Whichever runs second inherits the other's totals — if plan 7 has already landed, add its **+42 CMS / +25 frontend** to every expected number below. State which order was used when reporting.
+**Plan 5 and plan 7 are independent and touch no common file** — verified by diffing their `**Files:**` lists in both repos. `ChapterAdminLayout.astro` appears nowhere in plan 7, and although both mention `shared.contact-form` they treat different fields from different directions.
+
+Two caveats that follow from that, and belong here because this plan is the one asserting the independence:
+
+- **Whichever runs second inherits the other's totals.** If plan 7 has already landed, add its **+42 CMS / +25 frontend** to every expected number below. Plan 7 contains no reciprocal note, so if **plan 5** lands first its baseline table and every gate are wrong — tell whoever executes plan 7, or amend it.
+- **Plan 7 Task 8 runs a blanket `git add src/pages/`**, which would sweep this plan's `src/pages/api/chapter-admin/page.ts` and `src/pages/account/chapter/[chapterSlug]/page.astro` into plan 7's commit if they are uncommitted at that moment. Commit this plan's work before starting plan 7's Chunk 4.
 
 **3. Every CMS command needs `cd /Users/nk/Projects/AREAA/areaa-cms`** and every frontend command `cd /Users/nk/Projects/AREAA/areaa-frontend`. A missing `cd` in plan 4 made the headline gate run the wrong repo's suite.
 
@@ -83,10 +94,13 @@ Executed against the installed Strapi 5.45.1 and the seeded database on 2026-08-
 | `contact-form.notificationEmails` is a plain string on the component | ✅ Must be excluded from both the whitelist and the API response |
 | A chapter home zone holds **11 components** | ✅ aloha, boston and greater-chicago all 11 |
 | A zone can hold **several components of the same type** | ✅ aloha's zone has **three** `shared.member-group` (cmp 86, 87, 88). Pairing by type alone is therefore ambiguous — position is required. |
-| Draft and published zones have **identical type sequences** on all three chapters | ✅ Verified per chapter; this is what makes positional pairing sound |
+| Draft and published zones have **identical type sequences** on all three chapters | ✅ Verified per chapter — **but this is NOT sufficient for safe pairing.** Same length and same type sequence with different components is undetectable; reproduced by reordering aloha's member-groups. Structure parity is a necessary condition, not a sufficient one. |
+| Draft and published component **content** can differ | ⚠️ **It differs today, and the first version of this plan missed it.** aloha's draft hero title is `Chorp Chipper`; its published hero is `Our Chapter` — an unpublished national edit. Any save that writes both statuses unconditionally would *publish* that edit as a side effect. This is why the published write is gated on content parity. |
 | Draft/published component ids pair consecutively | ✅ aloha `(3,4) (45,46) (19,20) (37,38) …` — but the plan pairs by **position**, never by `id+1`, because consecutive ids are an artefact of seeding order |
 | `blocksToPlainText` is **lossy by design** | ✅ Its own docstring: "flattens whatever the CMS holds (headings, lists, links) down to lines". `textToBlocks` emits paragraphs only. |
-| Rich `body` content **exists in the database today** | ✅ `components_shared_sections` id 4 and 5 carry link/bold marks inside paragraphs. Neither is currently on a page, so the guard is not reachable through the UI with this exact seed — **the walkthrough must plant one to exercise it** (Task 8, Step 3). |
+| Rich `body` content **exists in the database today** | ⚠️ Partly. `components_shared_sections` id 4 and 5 carry **`bold: true` marks only** — there are **no link nodes anywhere in the database**, contrary to this plan's first version. Neither row is on a page, so the guard is not reachable through the UI with this seed — **the walkthrough must plant one to exercise it** (Task 8, Step 3). |
+| `db.query(type).findOne()` returns `body` as a **parsed array**, not a JSON string | ✅ Verified. The whole rich-body guard depends on it and the first version never stated it. |
+| `documents().findFirst({ populate: { components: true } })` returns components **in `order` sequence** at both statuses | ✅ Verified. `pairZones` depends on it and does not sort defensively. |
 | `pdx` has no home page | ✅ Confirmed in plan 4 and unchanged |
 | Plan 4's `findPartnerGroups` already establishes "write the component row by id at both statuses" | ✅ `src/api/chapter-admin/services/partners.js`; this plan generalises the same shape |
 | `db.query('shared.<type>').update({ where: { id }, data })` writes a component row without touching its page | ✅ Proven by plan 4's partner-group writes and its byte-identical `pages_cmps` check |
@@ -111,7 +125,8 @@ import { createRequire } from 'node:module';
 // One createRequire so BadInputError is the SAME class the service throws.
 const require = createRequire(import.meta.url);
 const {
-  EDITABLE_BY_TYPE, editableFieldsFor, isPlainBlocks, shapeComponentEdit, pairZones,
+  EDITABLE_BY_TYPE, editableFieldsFor, isPlainBlocks, textToBlocks, blocksToText,
+  shapeComponentEdit, pairZones, sameForFields,
 } = require('../../src/api/chapter-admin/services/page-content.js');
 const { BadInputError } = require('../../src/api/chapter-admin/services/fields.js');
 
@@ -163,6 +178,30 @@ describe('editableFieldsFor', () => {
     // A component added to the CMS later must render read-only, not crash and
     // not become silently editable.
     expect(editableFieldsFor('shared.brand-new-thing')).toEqual([]);
+  });
+
+  it('agrees with the actual component schemas on disk', () => {
+    // The hand-written banned-lists above are self-consistency checks: they
+    // assert the map against itself. THIS reads the real schemas, so it catches
+    // the next component national adds, a field that gets renamed, and a
+    // whitelisted field that is secretly a relation.
+    const require2 = createRequire(import.meta.url);
+    const page = require2('../../src/api/page/content-types/page/schema.json');
+    const zone = page.attributes.components.components;   // the dynamiczone list
+
+    expect(Object.keys(EDITABLE_BY_TYPE).sort()).toEqual([...zone].sort());
+
+    for (const [type, fields] of Object.entries(EDITABLE_BY_TYPE)) {
+      const file = type.replace('shared.', '');
+      const schema = require2(`../../src/components/shared/${file}.json`);
+      for (const field of fields) {
+        const attr = schema.attributes[field];
+        expect(attr, `${type}.${field} must exist`).toBeTruthy();
+        // Text only. A relation, media or nested component slipping in here is
+        // exactly how a "text edit" screen starts clearing a roster.
+        expect(['string', 'text', 'blocks']).toContain(attr.type);
+      }
+    }
   });
 });
 
@@ -243,6 +282,83 @@ describe('shapeComponentEdit', () => {
   });
 });
 
+// blocksToText fills EVERY textarea on the screen and the first version of this
+// plan specified it in one sentence of prose, with no implementation and no
+// test. The render tests use literal fixtures, so a broken one is invisible
+// there — and combines with a blank textarea into silent body loss on save.
+describe('blocksToText', () => {
+  it('joins paragraphs with newlines', () => {
+    expect(blocksToText([para('One'), para('Two')])).toBe('One\nTwo');
+  });
+
+  it('returns an empty string for an empty or absent body', () => {
+    expect(blocksToText([])).toBe('');
+    expect(blocksToText(null)).toBe('');
+    expect(blocksToText(undefined)).toBe('');
+  });
+
+  it('survives a non-array rather than throwing into a 500', () => {
+    expect(blocksToText('nope')).toBe('');
+  });
+
+  it('ROUND-TRIPS every shape isPlainBlocks accepts', () => {
+    // The property the whole guard exists to guarantee, and the first version
+    // asserted it nowhere. If a shape passes isPlainBlocks but does not survive
+    // blocksToText -> textToBlocks, the guard is a lie and an unedited save
+    // silently rewrites the body.
+    const shapes = [
+      [],
+      [para('One')],
+      [para('One'), para('Two')],
+      [para('Trailing space is trimmed on write')],
+    ];
+    for (const blocks of shapes) {
+      expect(isPlainBlocks(blocks)).toBe(true);
+      expect(textToBlocks(blocksToText(blocks))).toEqual(blocks);
+    }
+  });
+
+  it('does NOT accept a spacer paragraph, because it cannot round-trip one', () => {
+    // blocksToText drops empty lines and textToBlocks filters falsy ones, so an
+    // unedited GET->PUT would delete a deliberate spacer. Rejecting it as rich
+    // keeps the guard honest: anything isPlainBlocks accepts is safe.
+    expect(isPlainBlocks([para('One'), para(''), para('Two')])).toBe(false);
+    expect(isPlainBlocks([para('   ')])).toBe(false);
+  });
+});
+
+// The published write is gated on this, so it carries the plan's central
+// safety property.
+describe('sameForFields', () => {
+  it('is true when every compared field matches', () => {
+    expect(sameForFields({ title: 'A', intro: 'B' }, { title: 'A', intro: 'B' },
+      ['title', 'intro'])).toBe(true);
+  });
+
+  it('is false when any compared field differs', () => {
+    // aloha's hero today: draft "Chorp Chipper", published "Our Chapter".
+    expect(sameForFields({ title: 'Chorp Chipper' }, { title: 'Our Chapter' },
+      ['title'])).toBe(false);
+  });
+
+  it('ignores fields not being written', () => {
+    expect(sameForFields({ title: 'A', caption: 'x' }, { title: 'A', caption: 'y' },
+      ['title'])).toBe(true);
+  });
+
+  it('compares blocks by value, not by reference', () => {
+    expect(sameForFields({ body: [para('One')] }, { body: [para('One')] }, ['body'])).toBe(true);
+    expect(sameForFields({ body: [para('One')] }, { body: [para('Two')] }, ['body'])).toBe(false);
+  });
+
+  it('treats null and empty string as the same absence', () => {
+    // Strapi returns NULL for a never-set column and '' for a cleared one;
+    // treating those as a divergence would make the published write
+    // permanently unreachable on any component with an unset optional field.
+    expect(sameForFields({ title: null }, { title: '' }, ['title'])).toBe(true);
+  });
+});
+
 describe('pairZones', () => {
   const zone = (types) => types.map((t, i) => ({ __component: t, id: 100 + i, order: i }));
 
@@ -298,7 +414,17 @@ const { BadInputError } = require('./fields');
 
 /** Body text cap. Generous — this is a page section, not a tweet. */
 const MAX_BODY_LEN = 20000;
-const MAX_TEXT_LEN = 500;
+
+/**
+ * Cap for single-line text, checked against what is actually stored: the
+ * longest seeded values are `intro` 51, titles 33, `caption` 32.
+ *
+ * It matters that this is not tight. The form posts EVERY editable field of a
+ * section at once, so a cap below an existing value would make that section
+ * permanently unsaveable -- including its title. 500 was the first version's
+ * number and was never checked against the content it applies to.
+ */
+const MAX_TEXT_LEN = 2000;
 
 /**
  * What a chapter admin may edit, per component type.
@@ -360,14 +486,55 @@ function isPlainBlocks(blocks) {
     if (!block || typeof block !== 'object') return false;
     if (block.type !== 'paragraph') return false;
 
+    let text = '';
     for (const child of block.children ?? []) {
       if (!child || typeof child !== 'object') return false;
       if (child.type !== 'text') return false;          // links, images, anything else
       // Any mark at all — bold, italic, underline, strikethrough, code.
+      // `bold: false` counts too: some serialisers emit explicit false marks
+      // after a toggle, and this errs toward read-only rather than toward loss.
       for (const key of Object.keys(child)) {
         if (key !== 'type' && key !== 'text') return false;
       }
+      text += child.text ?? '';
     }
+
+    // Must survive blocksToText -> textToBlocks unchanged. A blank or
+    // whitespace-only paragraph is a deliberate spacer that both functions
+    // drop, so an UNEDITED save would delete it. Rejecting it here keeps the
+    // guard's promise literally true: anything this accepts is safe to edit.
+    if (text.trim() === '') return false;
+  }
+  return true;
+}
+
+/**
+ * Blocks -> the text a textarea shows. The inverse of textToBlocks for every
+ * shape isPlainBlocks accepts; see the round-trip test, which is the property
+ * the rich-body guard actually rests on.
+ */
+function blocksToText(blocks) {
+  if (!Array.isArray(blocks)) return '';
+  return blocks
+    .map((b) => (b?.children ?? []).map((c) => c?.text ?? '').join(''))
+    .join('\n');
+}
+
+/**
+ * Do these two component rows agree on the fields about to be written?
+ *
+ * This is what gates the published write. Position plus type is not proof two
+ * rows are the same component, and an unpublished national edit is not a
+ * mispairing but must be treated the same way -- hands off published.
+ *
+ * NULL and '' compare equal: Strapi returns NULL for a never-set optional
+ * column and '' for a cleared one, and treating that as divergence would make
+ * the published write permanently unreachable on ordinary content.
+ */
+function sameForFields(a, b, fields) {
+  const norm = (v) => (v === null || v === undefined ? '' : v);
+  for (const field of fields) {
+    if (JSON.stringify(norm(a?.[field])) !== JSON.stringify(norm(b?.[field]))) return false;
   }
   return true;
 }
@@ -449,8 +616,8 @@ function pairZones(draft, published) {
 }
 
 module.exports = {
-  EDITABLE_BY_TYPE, editableFieldsFor, isPlainBlocks, textToBlocks,
-  shapeComponentEdit, pairZones, MAX_BODY_LEN, MAX_TEXT_LEN,
+  EDITABLE_BY_TYPE, editableFieldsFor, isPlainBlocks, textToBlocks, blocksToText,
+  shapeComponentEdit, pairZones, sameForFields, MAX_BODY_LEN, MAX_TEXT_LEN,
 };
 ```
 
@@ -461,34 +628,56 @@ cd /Users/nk/Projects/AREAA/areaa-cms && PATH="/opt/homebrew/bin:$PATH" \
   npx vitest run tests/unit/page-content.test.js
 ```
 
-Expected: PASS, **25 tests** — 7 whitelist, 6 plain-blocks, 8 shaping, 4 pairing.
+Expected: PASS, **36 tests** — 8 whitelist (incl. the schema-derived one), 8 plain-blocks, 5 blocksToText/round-trip, 5 sameForFields, 6 shaping, 4 pairing.
 
 - [ ] **Step 5: Mutation-check the two guards that carry weight**
 
 Both of these exist because removing them causes silent data loss, so prove they can fail:
 
+Write `scripts/mutate-page-content.sh`, so each mutation **asserts that it
+applied** before running. A silently unmatched replacement is indistinguishable
+from an uncaught mutation, and the first version of this plan shipped exactly
+that.
+
 ```bash
-cd /Users/nk/Projects/AREAA/areaa-cms && cp src/api/chapter-admin/services/page-content.js /tmp/pc.bak
-# 1. make isPlainBlocks permissive
-python3 - <<'PY'
-p='src/api/chapter-admin/services/page-content.js'; s=open(p).read()
-s=s.replace("      if (child.type !== 'text') return false;", "      if (false) return false;")
-open(p,'w').write(s)
-PY
-PATH="/opt/homebrew/bin:$PATH" npx vitest run tests/unit/page-content.test.js 2>&1 | grep "Tests "
-cp /tmp/pc.bak src/api/chapter-admin/services/page-content.js
-# 2. make pairZones ignore the type sequence
-python3 - <<'PY'
-p='src/api/chapter-admin/services/page-content.js'; s=open(p).read()
-s=s.replace("    if (d[i].__component !== published[i].__component) return null;", "")
-open(p,'w').write(s)
-PY
-PATH="/opt/homebrew/bin:$PATH" npx vitest run tests/unit/page-content.test.js 2>&1 | grep "Tests "
-cp /tmp/pc.bak src/api/chapter-admin/services/page-content.js && rm /tmp/pc.bak
-PATH="/opt/homebrew/bin:$PATH" npx vitest run tests/unit/page-content.test.js 2>&1 | grep "Tests "
+cd /Users/nk/Projects/AREAA/areaa-cms && cat > /tmp/mutate.py <<'EOF'
+import subprocess, shutil, sys
+SRC = 'src/api/chapter-admin/services/page-content.js'
+MUTATIONS = [
+    # (label, find, replace) -- each must kill at least one test
+    ('let marks through',        "        if (key !== 'type' && key !== 'text') return false;", '        continue;'),
+    ('ignore type sequence',     "    if (d[i].__component !== published[i].__component) return null;", ''),
+    ('sameForFields always true', "    if (JSON.stringify(norm(a?.[field])) !== JSON.stringify(norm(b?.[field]))) return false;", ''),
+    ('accept any block type',    "    if (block.type !== 'paragraph') return false;", ''),
+]
+shutil.copy(SRC, '/tmp/pc.bak')
+failed = []
+for label, old, new in MUTATIONS:
+    src = open('/tmp/pc.bak').read()
+    assert old in src, f'MUTATION DID NOT APPLY: {label}'
+    open(SRC, 'w').write(src.replace(old, new, 1))
+    r = subprocess.run(['npx', 'vitest', 'run', 'tests/unit/page-content.test.js'],
+                       capture_output=True, text=True)
+    killed = r.returncode != 0
+    print(f'{"KILLED " if killed else "SURVIVED"}  {label}')
+    if not killed:
+        failed.append(label)
+shutil.copy('/tmp/pc.bak', SRC)
+sys.exit(1 if failed else 0)
+EOF
+PATH="/opt/homebrew/bin:$PATH" python3 /tmp/mutate.py && \
+  PATH="/opt/homebrew/bin:$PATH" npx vitest run tests/unit/page-content.test.js 2>&1 | grep "Tests "
 ```
 
-Expected: **at least one failure each time**, then 25 passing again. A mutation that changes nothing means the test is decorative.
+Expected: **four `KILLED` lines**, then the full file passing again. A `SURVIVED`
+line means that test is decorative and the guard it names is unprotected.
+
+Do **not** mutate `if (child.type !== 'text') return false;` — it is an
+*equivalent mutant*. A link node `{type:'link', url, children}` still trips the
+key-whitelist loop on `url`, so removing the line changes nothing and the gate
+can never go red. Verified by execution; the first version of this plan made it
+mutation 1 and an executing agent would have hard-stopped on a gate that cannot
+be satisfied.
 
 - [ ] **Step 6: Commit**
 
@@ -513,18 +702,42 @@ Append:
 ```js
 describe('findPageZones', () => {
   const cmp = (type, id) => ({ __component: type, id });
-  // Returns whatever `pages[status]` holds; null means "no home page".
-  const stub = (pages) => ({
-    documents: () => ({ findFirst: async ({ status }) => pages[status] ?? null }),
+  // HONOURS the filters. A stub that ignores them cannot catch a lookup that
+  // drops `chapter: { slug }` or asks for the wrong page, and the first version
+  // of this plan shipped exactly that: removing the chapter filter left all
+  // five tests passing.
+  const stub = (pages, seen = []) => ({
+    seen,
+    documents: (uid) => ({
+      findFirst: async ({ filters, status }) => {
+        seen.push({ uid, filters, status });
+        if (uid !== 'api::page.page') return null;
+        if (filters?.slug !== 'home') return null;
+        if (filters?.chapter?.slug !== pages.__slug) return null;
+        return pages[status] ?? null;
+      },
+    }),
   });
 
   it('reports no-home-page when neither status has one', async () => {
     // `pdx` is this chapter today.
-    expect(await findPageZones(stub({}), 'pdx')).toEqual({ error: 'no-home-page' });
+    expect(await findPageZones(stub({ __slug: 'pdx' }), 'pdx')).toEqual({ error: 'no-home-page' });
+  });
+
+  it('asks for THIS chapter\'s home page, not just any home page', async () => {
+    const seen = [];
+    await findPageZones(stub({ __slug: 'aloha-hawaii' }, seen), 'aloha-hawaii');
+    expect(seen.length).toBeGreaterThan(0);
+    for (const call of seen) {
+      expect(call.uid).toBe('api::page.page');
+      expect(call.filters.slug).toBe('home');
+      expect(call.filters.chapter.slug).toBe('aloha-hawaii');
+    }
   });
 
   it('returns paired components when both zones agree', async () => {
     const res = await findPageZones(stub({
+      __slug: 'aloha-hawaii',
       draft: { documentId: 'pg1', components: [cmp('shared.hero', 3)] },
       published: { documentId: 'pg1', components: [cmp('shared.hero', 4)] },
     }), 'aloha-hawaii');
@@ -538,6 +751,7 @@ describe('findPageZones', () => {
     // The admin restructured the draft and did not publish. Writing published
     // by position would put the hero's text into the gallery.
     const res = await findPageZones(stub({
+      __slug: 'aloha-hawaii',
       draft: { documentId: 'pg1', components: [cmp('shared.hero', 3), cmp('shared.gallery', 9)] },
       published: { documentId: 'pg1', components: [cmp('shared.gallery', 4)] },
     }), 'aloha-hawaii');
@@ -547,6 +761,7 @@ describe('findPageZones', () => {
 
   it('pairs draft-only for a page that has never been published', async () => {
     const res = await findPageZones(stub({
+      __slug: 'greater-chicago',
       draft: { documentId: 'pg1', components: [cmp('shared.hero', 3)] },
     }), 'greater-chicago');
     expect(res.pairs[0].publishedId).toBeNull();
@@ -557,6 +772,7 @@ describe('findPageZones', () => {
     // Published-only would mean editing against a zone the admin cannot see,
     // which is the shape of the bug plan 4's review caught in findPartnerGroups.
     expect(await findPageZones(stub({
+      __slug: 'aloha-hawaii',
       published: { documentId: 'pg1', components: [cmp('shared.hero', 4)] },
     }), 'aloha-hawaii')).toEqual({ error: 'no-home-page' });
   });
@@ -611,7 +827,7 @@ cd /Users/nk/Projects/AREAA/areaa-cms && PATH="/opt/homebrew/bin:$PATH" \
   npx vitest run tests/unit/page-content.test.js
 ```
 
-Expected: PASS, **30 tests** (25 + 5).
+Expected: PASS, **42 tests** (36 + 6).
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-cms && \
@@ -625,7 +841,16 @@ cd /Users/nk/Projects/AREAA/areaa-cms && \
 
 ### Task 3: `GET /chapter-admin/page` and `PUT /chapter-admin/page`
 
-**Files:** Modify `controllers/chapter-admin.js`, `routes/chapter-admin.js`, `grants.js`
+**Files:** Modify `controllers/chapter-admin.js`, `routes/chapter-admin.js`, `grants.js`, `services/page-content.js`
+
+The controller needs:
+
+```js
+const {
+  editableFieldsFor, isPlainBlocks, shapeComponentEdit, findPageZones,
+  blocksToText, sameForFields,
+} = require('../services/page-content');
+```
 
 - [ ] **Step 1: The read handler**
 
@@ -697,7 +922,19 @@ cd /Users/nk/Projects/AREAA/areaa-cms && \
     // id from the payload. A client-supplied id could name a component on
     // another chapter's page — position is meaningless outside this zone, so it
     // cannot be pointed anywhere else.
+    //
+    // Validate BEFORE coercing. `Number(null)`, `Number('')` and `Number(false)`
+    // are all 0, and index 0 is the hero — so a dropped or malformed field
+    // would rewrite the page's headline at both statuses and return 200.
+    // Verified reachable: {index: null} rewrote the hero. The client-side
+    // mapper guards this too, but the server is the boundary.
+    if (typeof input.index !== 'number' && typeof input.index !== 'string') {
+      return ctx.badRequest('No such section on this page');
+    }
     const index = Number(input.index);
+    if (!Number.isInteger(index) || index < 0) {
+      return ctx.badRequest('No such section on this page');
+    }
     const pair = found.pairs.find((p) => p.index === index);
     if (!pair) return ctx.badRequest('No such section on this page');
 
@@ -720,21 +957,56 @@ cd /Users/nk/Projects/AREAA/areaa-cms && \
       throw err;
     }
 
-    // Both statuses, same values. Published is what the public site renders;
-    // draft is what the admin panel shows. Writing one leaves the other stale.
-    const targets = [pair.draftId, pair.publishedId].filter((id) => id !== null);
+    // CONTENT PARITY gates the published write.
+    //
+    // Position plus matching type is not proof the two rows are the same
+    // component: a zone holds three member-groups, and a same-type reorder in
+    // the draft produces a pairing that looks perfect and is wrong. Reproduced
+    // against real data — an admin edited "Board of Directors" and the public
+    // site's "Executive Committee" heading changed, reporting wrote: 2.
+    //
+    // The same check also stops a chapter admin's unrelated save PUBLISHING an
+    // unpublished national draft edit. aloha's hero is in exactly that state
+    // today (draft "Chorp Chipper", published "Our Chapter").
+    //
+    // Compare the PRE-EDIT draft values, field by field, against the published
+    // row. Equal => same component, safe to write both. Different => either a
+    // mispairing or an unpublished edit, and both mean hands off published.
+    let publishedId = pair.publishedId;
+    let skipReason = null;
+    if (publishedId !== null) {
+      const pubRow = await strapi.db.query(pair.type).findOne({ where: { id: publishedId } });
+      if (!pubRow || !sameForFields(row, pubRow, Object.keys(data))) {
+        publishedId = null;
+        skipReason = 'content-diverged';
+      }
+    } else {
+      skipReason = found.structureDiverged ? 'structure-diverged' : 'never-published';
+    }
+
+    const targets = [pair.draftId, publishedId].filter((id) => id !== null);
     for (const id of targets) {
       await strapi.db.query(pair.type).update({ where: { id }, data });
     }
 
     ctx.body = {
       data: { index, type: pair.type, wrote: targets.length },
-      meta: { structureDiverged: found.structureDiverged },
+      // `skipReason` distinguishes the three ways a save reaches the draft only.
+      // The screen must say WHICH — "contact national to publish" is wrong
+      // advice for a page that has simply never been published.
+      meta: { structureDiverged: found.structureDiverged, skipReason },
     };
   }),
 ```
 
-**`wrote` is load-bearing.** A save that touched only the draft returns `wrote: 1`, and the screen must say the live site has not changed. Silently writing one row while implying both is the failure this plan is most likely to ship.
+**`wrote` is load-bearing, and `wrote: 1` is common rather than exceptional.** Any legitimate draft/published difference makes the published write unreachable — including aloha's hero today. A save that touched only the draft returns `wrote: 1` with a `skipReason`, and the screen must say the live site has not changed *and why*. Silently writing one row while implying both is the failure this plan is most likely to ship; telling the admin the wrong reason is the second.
+
+| `skipReason` | Means | What the screen says |
+|---|---|---|
+| `null` | both rows written | "Section saved." |
+| `never-published` | the page has no published version | "Saved. This page isn't published yet, so there's nothing live to update." |
+| `structure-diverged` | draft and published zones differ in shape | "Saved to your draft. Your live page has unpublished structural changes — contact national to publish them." |
+| `content-diverged` | this component differs between draft and published | "Saved to your draft. This section has unpublished changes from AREAA national, so your live page hasn't changed yet." |
 
 - [ ] **Step 3: Routes and grants**
 
@@ -786,7 +1058,18 @@ import request from 'supertest';
 import { boot, shutdown, jwtFor, makeChapterAdmin, draftChapters } from './helpers.js';
 
 const RUN = Date.now();
-let strapi, chapterA, chapterB, tokenA, sections, original;
+let strapi, chapterA, chapterB, tokenA, sections, snapshot, zoneRows;
+
+/** Every component row on chapterA's home page, BOTH statuses, straight from the DB. */
+async function zoneComponentRows() {
+  return strapi.db.connection('pages_cmps as z')
+    .join('pages as p', 'p.id', 'z.entity_id')
+    .join('pages_chapter_lnk as l', 'l.page_id', 'p.id')
+    .join('chapters as c', 'c.id', 'l.chapter_id')
+    .where('c.document_id', chapterA.documentId).andWhere('p.slug', 'home')
+    .orderBy(['z.entity_id', 'z.order'])
+    .select('z.cmp_id', 'z.component_type', 'z.entity_id', 'z.order');
+}
 
 beforeAll(async () => {
   strapi = await boot();
@@ -802,19 +1085,39 @@ beforeAll(async () => {
   expect(res.status).toBe(200);
   sections = res.body.data;
 
-  // Capture every editable value so afterAll can put the copy back verbatim.
-  original = sections.map((s) => ({ index: s.index, type: s.type, values: { ...s.values } }));
+  // Snapshot BOTH statuses, read from the component rows themselves.
+  //
+  // The first version of this plan snapshotted the GET response — which is
+  // DRAFT ONLY — and restored it through the API, which writes both statuses.
+  // That does not restore, it NORMALISES published to draft: aloha's published
+  // hero ("Our Chapter") was permanently overwritten with its unpublished draft
+  // title ("Chorp Chipper") every time the suite ran, and the plan's own
+  // restore gate reported COPY RESTORED because it only diffed sections.
+  zoneRows = await zoneComponentRows();
+  snapshot = [];
+  for (const r of zoneRows) {
+    const fields = ['title', 'body', 'intro', 'submitLabel', 'caption'];
+    const row = await strapi.db.query(r.component_type).findOne({ where: { id: r.cmp_id } });
+    if (!row) continue;
+    snapshot.push({
+      id: r.cmp_id,
+      type: r.component_type,
+      values: Object.fromEntries(
+        fields.filter((f) => f in row).map((f) => [f, row[f]])),
+    });
+  }
+  expect(snapshot.length).toBe(zoneRows.length);
 });
 
 afterAll(async () => {
   try {
     try {
-      for (const s of original) {
+      // Restore each component ROW independently, at its own status. NEVER
+      // through the API: the API writes both statuses from one set of values,
+      // which is what corrupted the published rows in the first version.
+      for (const s of snapshot) {
         if (Object.keys(s.values).length === 0) continue;
-        await request(strapi.server.httpServer)
-          .put('/api/chapter-admin/page')
-          .set('Authorization', `Bearer ${tokenA}`)
-          .send({ chapterSlug: chapterA.slug, index: s.index, ...s.values });
+        await strapi.db.query(s.type).update({ where: { id: s.id }, data: s.values });
       }
     } finally {
       const users = await strapi.query('plugin::users-permissions.user')
@@ -838,10 +1141,15 @@ const reread = async () => (await auth(
 const firstOfType = (type) => sections.find((s) => s.type === type && s.editable.includes('title'));
 
 describe('GET /api/chapter-admin/page', () => {
-  it('returns the zone in order, with a type and index per section', async () => {
-    expect(sections.length).toBeGreaterThan(1);
-    expect(sections.map((s) => s.index)).toEqual(sections.map((_, i) => i));
-    for (const s of sections) expect(s.type).toMatch(/^shared\./);
+  it('returns the zone in the order the page stores it', async () => {
+    // Compared against pages_cmps."order", NOT against the array's own
+    // positions. The first version asserted `indexes === [0..n]`, which the
+    // controller guarantees by construction — it could not fail, and order is
+    // the one thing positional pairing still depends on.
+    const draftRows = (await zoneComponentRows())
+      .filter((r) => r.entity_id === Math.min(...zoneRows.map((z) => z.entity_id)));
+    expect(sections.map((s) => s.type)).toEqual(draftRows.map((r) => r.component_type));
+    expect(sections.map((s) => s.draftId)).toEqual(draftRows.map((r) => r.cmp_id));
   });
 
   it('offers title on every known component type', () => {
@@ -922,12 +1230,45 @@ describe('PUT /api/chapter-admin/page', () => {
     expect(after.values.body).toBe(`One ${RUN}\nTwo`);
   });
 
-  it('addresses sections by POSITION, so a foreign component id is unusable', async () => {
-    // The payload carries an index into THIS zone. There is no component id to
-    // point at another chapter's page.
+  it('addresses sections by POSITION, so a component id in the payload is inert', async () => {
+    // Actually post one, which the first version never did — it only tested
+    // index 999 and would have passed against a handler that honoured a
+    // client-supplied id.
+    const foreign = await strapi.db.connection('pages_cmps')
+      .where('component_type', 'shared.section')
+      .whereNotIn('cmp_id', (await zoneComponentRows()).map((r) => r.cmp_id))
+      .first();
+    expect(foreign).toBeTruthy();
+    const before = await strapi.db.query('shared.section')
+      .findOne({ where: { id: foreign.cmp_id } });
+
+    const s = firstOfType('shared.section');
+    await save({ index: s.index, draftId: foreign.cmp_id, id: foreign.cmp_id,
+                 title: `Position ${RUN}` });
+
+    const after = await strapi.db.query('shared.section')
+      .findOne({ where: { id: foreign.cmp_id } });
+    expect(after.title).toBe(before.title);
+  });
+
+  it('400s an out-of-range index', async () => {
     const res = await save({ index: 999, title: 'nope' });
     expect(res.status).toBe(400);
     expect(res.body.error?.message ?? '').toMatch(/no such section/i);
+  });
+
+  it('400s a malformed index rather than defaulting to the hero', async () => {
+    // Number(null), Number('') and Number(false) are all 0, and index 0 is the
+    // hero. Verified reachable in the first version: {index: null} returned 200
+    // and rewrote the page headline at both statuses.
+    const hero = sections[0];
+    const before = await strapi.db.query(hero.type).findOne({ where: { id: hero.draftId } });
+    for (const bad of [null, '', false, [], {}, 1.5, -1]) {
+      const res = await save({ index: bad, title: `Malformed ${RUN}` });
+      expect(res.status, `index=${JSON.stringify(bad)}`).toBe(400);
+    }
+    const after = await strapi.db.query(hero.type).findOne({ where: { id: hero.draftId } });
+    expect(after.title).toBe(before.title);
   });
 
   it('DROPS a field the component type does not allow', async () => {
@@ -976,7 +1317,15 @@ describe('PUT /api/chapter-admin/page', () => {
   it('never touches a component on another chapter page', async () => {
     // Derived from the database independently of findPageZones — deriving it
     // from the same lookup would make the function its own oracle.
-    const mine = new Set(sections.map((s) => s.draftId));
+    //
+    // `mine` must cover BOTH statuses. The first version used `sections`, which
+    // carries draftId only, so this chapter's own PUBLISHED section landed in
+    // `others` — and the save legitimately writes it. The test failed 100% of
+    // the time and took the 220 gate with it.
+    const mine = new Set(
+      (await zoneComponentRows())
+        .filter((r) => r.component_type === 'shared.section')
+        .map((r) => r.cmp_id));
     const others = await strapi.db.connection('pages_cmps')
       .where('component_type', 'shared.section')
       .whereNotIn('cmp_id', [...mine]).select('cmp_id');
@@ -999,6 +1348,42 @@ describe('PUT /api/chapter-admin/page', () => {
     const res = await auth(api().put('/api/chapter-admin/page'))
       .send({ chapterSlug: chapterB.slug, index: 0, title: 'nope' });
     expect(res.status).toBe(403);
+  });
+
+  it('SKIPS the published write when that row has diverged, and says so', async () => {
+    // The plan's central safety property, and the first version proved it
+    // nowhere: draftChapters yields two fully-published chapters, so `wrote`
+    // was always 2 and the only assertion was toBe(2).
+    //
+    // Real data already contains this state — aloha's draft hero title differs
+    // from its published one — but construct it explicitly so the test does not
+    // depend on which chapters draftChapters happens to return.
+    const s = firstOfType('shared.section');
+    const rows = (await zoneComponentRows()).filter((r) => r.component_type === 'shared.section');
+    expect(rows.length).toBe(2);
+    const [draftRow, pubRow] = rows;
+    const pubBefore = await strapi.db.query('shared.section').findOne({ where: { id: pubRow.cmp_id } });
+
+    // Make published differ from draft, as an unpublished national edit would.
+    await strapi.db.query('shared.section')
+      .update({ where: { id: pubRow.cmp_id }, data: { title: `Diverged ${RUN}` } });
+    try {
+      const res = await save({ index: s.index, title: `Attempt ${RUN}` });
+      expect(res.status).toBe(200);
+      expect(res.body.data.wrote).toBe(1);
+      expect(res.body.meta.skipReason).toBe('content-diverged');
+
+      const draftAfter = await strapi.db.query('shared.section')
+        .findOne({ where: { id: draftRow.cmp_id } });
+      const pubAfter = await strapi.db.query('shared.section')
+        .findOne({ where: { id: pubRow.cmp_id } });
+      expect(draftAfter.title).toBe(`Attempt ${RUN}`);
+      // Untouched. Writing it would have PUBLISHED an edit nobody approved.
+      expect(pubAfter.title).toBe(`Diverged ${RUN}`);
+    } finally {
+      await strapi.db.query('shared.section')
+        .update({ where: { id: pubRow.cmp_id }, data: { title: pubBefore.title } });
+    }
   });
 
   it('does not change the zone STRUCTURE', async () => {
@@ -1026,21 +1411,55 @@ cd /Users/nk/Projects/AREAA/areaa-cms && pkill -f "strapi develop" ; \
 cd /Users/nk/Projects/AREAA/areaa-cms && PATH="/opt/homebrew/bin:$PATH" npm test
 ```
 
-Expected: **15 tests**, then **220 across 17 files** — 175 from plans 1–4, plus 30 page-content unit and 15 page integration.
+Expected: **18 tests**, then **235 across 17 files** — 175 from plans 1–4, plus 42 page-content unit and 18 page integration.
 
 - [ ] **Step 3: Prove the microsite copy came back**
 
 A count gate cannot see changed text. Compare the values:
 
+Two problems with the obvious version, both real. It diffed **one table's
+titles**, so a corrupted hero, body, intro or contact form was invisible — and
+that is exactly what the first version's restore corrupted. And `&&`-chaining
+the test run to the diff meant a **failing suite** short-circuited to the `||`
+branch and printed "fix the restore", sending the operator after a bug that was
+not there.
+
+Snapshot every editable column of every zone component type, `quote()` so `NULL`
+and `''` stay distinguishable, and keep the run separate from the diff:
+
 ```bash
-cd /Users/nk/Projects/AREAA/areaa-cms && \
-  sqlite3 .tmp/data.db "SELECT id, title FROM components_shared_sections ORDER BY id;" > /tmp/p5-before.txt && \
-  PATH="/opt/homebrew/bin:$PATH" npx vitest run tests/integration/page.test.js > /dev/null && \
-  sqlite3 .tmp/data.db "SELECT id, title FROM components_shared_sections ORDER BY id;" > /tmp/p5-after.txt && \
-  diff /tmp/p5-before.txt /tmp/p5-after.txt && echo "COPY RESTORED" || echo "MICROSITE COPY CHANGED — fix the restore"
+cd /Users/nk/Projects/AREAA/areaa-cms && cat > /tmp/p5-copy.sql <<'EOF'
+SELECT 'hero',    id, quote(title), quote(body)  FROM components_shared_heroes
+UNION ALL SELECT 'section', id, quote(title), quote(body)  FROM components_shared_sections
+UNION ALL SELECT 'contact', id, quote(title), quote(intro) FROM components_shared_contact_forms
+UNION ALL SELECT 'video',   id, quote(title), quote(caption) FROM components_shared_video_embeds
+UNION ALL SELECT 'gallery', id, quote(title), '' FROM components_shared_galleries
+UNION ALL SELECT 'events',  id, quote(title), '' FROM components_shared_upcoming_events
+UNION ALL SELECT 'members', id, quote(title), '' FROM components_shared_member_groups
+UNION ALL SELECT 'partners',id, quote(title), '' FROM components_shared_partner_groups
+UNION ALL SELECT 'social',  id, quote(title), '' FROM components_shared_social_media_feeds
+ORDER BY 1, 2;
+EOF
+sqlite3 .tmp/data.db < /tmp/p5-copy.sql > /tmp/p5-before.txt
 ```
 
-Expected: `COPY RESTORED`.
+```bash
+cd /Users/nk/Projects/AREAA/areaa-cms && \
+  PATH="/opt/homebrew/bin:$PATH" npx vitest run tests/integration/page.test.js
+```
+
+```bash
+cd /Users/nk/Projects/AREAA/areaa-cms && \
+  sqlite3 .tmp/data.db < /tmp/p5-copy.sql > /tmp/p5-after.txt
+diff /tmp/p5-before.txt /tmp/p5-after.txt && echo "COPY RESTORED"
+```
+
+Expected: the suite passes, then `COPY RESTORED`. Run the diff **whether or not
+the suite passed** — a failed run is exactly when the restore is most likely to
+have been skipped.
+
+Verify the gate can fail before trusting it: change one title by hand, re-run
+the diff, confirm it reports the difference, then put it back.
 
 - [ ] **Step 4: Commit**
 
@@ -1088,14 +1507,25 @@ export async function getPageContent(
     return { sections: body.data, structureDiverged: Boolean(body.meta?.structureDiverged) };
 }
 
+export type SkipReason = "never-published" | "structure-diverged" | "content-diverged" | null;
+
 export async function savePageSection(
     jwt: string, chapterSlug: string, index: number, values: Record<string, string>
-): Promise<{ ok: boolean; status: number; wrote: number }> {
+): Promise<{ ok: boolean; status: number; wrote: number; skipReason: SkipReason }> {
     const { status, body } = await call(jwt, "/page", {
         method: "PUT",
         body: JSON.stringify({ chapterSlug, index, ...values }),
     });
-    return { ok: status === 200 && Boolean(body?.data), status, wrote: body?.data?.wrote ?? 0 };
+    // `skipReason` must survive this hop. `wrote: 1` has three distinct causes
+    // and they need three distinct messages — telling an admin whose page has
+    // simply never been published to "contact national to publish your
+    // structural changes" is a wrong answer delivered confidently.
+    return {
+        ok: status === 200 && Boolean(body?.data),
+        status,
+        wrote: body?.data?.wrote ?? 0,
+        skipReason: body?.meta?.skipReason ?? null,
+    };
 }
 ```
 
@@ -1195,10 +1625,30 @@ cd /Users/nk/Projects/AREAA/areaa-frontend && npm run check
 
 Expected: **7 tests**, 0 errors.
 
+- [ ] **Step 5: Correct the stale comment in `blocks.ts`**
+
+`src/lib/blocks.ts:6` says "Plan 4 replaces the textarea these serve with TipTap". It is plan 6, and this plan adds a second consumer of those converters:
+
+```diff
+- * PLACEHOLDER, deliberately. Plan 4 replaces the textarea these serve with
+- * TipTap and a real bidirectional converter. Until then a chapter admin can
+- * write paragraphs and nothing else, which is why the form labels the field as
+- * plain text rather than implying formatting is available.
++ * PLACEHOLDER, deliberately. Plan 6 replaces the textareas these serve with
++ * TipTap and a real bidirectional converter. Until then a chapter admin can
++ * write paragraphs and nothing else, which is why the forms label the field as
++ * plain text rather than implying formatting is available.
++ *
++ * Plan 5's /page screen only offers a body textarea when the stored blocks are
++ * plain paragraphs, precisely because blocksToPlainText below is lossy.
+```
+
+- [ ] **Step 6: Commit**
+
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-frontend && \
   git add src/lib/chapter-admin/page.ts src/lib/chapter-admin/index.ts \
-          src/lib/page-form.ts tests/unit/page-form.test.ts && \
+          src/lib/page-form.ts tests/unit/page-form.test.ts src/lib/blocks.ts && \
   git commit -m "feat: page content client and section payload mapping"
 ```
 
@@ -1235,8 +1685,24 @@ describe("PageSectionForm", () => {
         expect(html).toContain('name="title"');
         expect(html).toContain("Our Chapter");
         expect(html).toContain('name="body"');
+        // The BODY's value, not just the title's. Without this the test passes
+        // against a blank textarea, and a heading-only save wipes the body at
+        // both statuses on the live site.
+        expect(html).toContain("Line one");
         expect(html).toContain('name="sectionIndex"');
         expect(html).toContain('value="2"');
+    });
+
+    it("carries editableFields, which the save route reads to build the payload", async () => {
+        // Omitting it makes every save bounce to ?error=missing while the whole
+        // suite stays green — verified against a component built without it.
+        const html = await render({});
+        expect(html).toContain('name="editableFields"');
+        expect(html).toContain('value="title,body"');
+    });
+
+    it("carries the chapter slug the save needs", async () => {
+        expect(await render({})).toContain('name="chapterSlug"');
     });
 
     it("names the section by type, so the admin can tell them apart", async () => {
@@ -1302,7 +1768,31 @@ const FIELD_LABELS: Record<string, string> = {
 };
 ```
 
-The component renders `<form method="post" action="/api/chapter-admin/page">` with a hidden `sectionIndex`, a `FormField` per editable name (`body` as a textarea), and a Save button — **only when `editable.length > 0`**. When `readOnlyReason` is `rich-body` it renders the remaining fields plus a note: *"The body of this section was formatted by AREAA national. Editing it here would remove that formatting, so it's shown on your site as-is."* When `not-editable`, it renders the type label and nothing else.
+The component renders `<form method="post" action="/api/chapter-admin/page">` with **three** hidden inputs — `chapterSlug`, `sectionIndex`, and **`editableFields`** — a `FormField` per editable name (`body` as a textarea, **carrying its current value**), and a Save button, **only when `editable.length > 0`**:
+
+```astro
+    <input type="hidden" name="chapterSlug" value={chapterSlug} />
+    <input type="hidden" name="sectionIndex" value={String(section.index)} />
+    {/*
+      The route cannot know which fields THIS section allows — the whitelist is
+      per component type and lives on the server. Omitting this input makes
+      `toSectionPayload` return null and EVERY save bounce to ?error=missing,
+      while every test and the typecheck stay green. The first version of this
+      plan specified the route's read of it and not the input itself.
+    */}
+    <input type="hidden" name="editableFields" value={section.editable.join(",")} />
+
+    {section.editable.map((name) => (
+        <FormField
+            label={FIELD_LABELS[name] ?? name}
+            name={name}
+            type={name === "body" ? "textarea" : "text"}
+            value={section.values[name] ?? ""}
+        />
+    ))}
+```
+
+`value={section.values[name] ?? ""}` is load-bearing on **every** field, not just `title`. A body textarea rendered without its value looks empty; an admin fixing only the heading posts `body=""`, and `textToBlocks("")` clears the body at both statuses on the live site. When `readOnlyReason` is `rich-body` it renders the remaining fields plus a note: *"The body of this section was formatted by AREAA national. Editing it here would remove that formatting, so it's shown on your site as-is."* When `not-editable`, it renders the type label and nothing else.
 
 - [ ] **Step 3: The API route**
 
@@ -1319,21 +1809,45 @@ if (!result.ok) {
     if (result.status === 400) return back(base, "error=stale");
     return back(base, "error=save");
 }
-// wrote === 1 means the draft changed but the live page did not.
-return back(base, result.wrote < 2 ? "saved=draft" : "saved=1");
+// wrote === 1 means the draft changed but the live page did not, and WHY
+// decides what the admin should do about it.
+if (result.wrote < 2) return back(base, `saved=draft&why=${result.skipReason ?? "unknown"}`);
+return back(base, "saved=1");
 ```
 
 - [ ] **Step 4: The screen**
 
 `/account/chapter/[chapterSlug]/page.astro` loads `getPageContent`, renders one `PageSectionForm` per section in zone order, and adds a **Partners** style nav entry. Flash messages:
 
-- `saved=1` → "Section saved."
-- `saved=draft` → **"Saved to your draft. Your live page hasn't changed — this page has unpublished structural edits, so contact national to publish them."**
-- `error=stale` → "That section changed while you were editing. Reload and try again."
+```ts
+const flashes: Record<string, string> = {
+    "1": "Section saved.",
+    // Three distinct causes of wrote:1, three distinct answers. The first
+    // version collapsed them into the structural message, which is simply
+    // false for a page that has never been published.
+    "draft:never-published":
+        "Saved. This page isn't published yet, so there's nothing live to update.",
+    "draft:structure-diverged":
+        "Saved to your draft. Your live page has unpublished structural changes — contact national to publish them.",
+    "draft:content-diverged":
+        "Saved to your draft. This section has unpublished changes from AREAA national, so your live page hasn't changed yet.",
+    "draft:unknown": "Saved to your draft. Your live page hasn't changed yet.",
+};
 
-When `structureDiverged` is true, show a persistent banner above every form saying the same thing, because the admin needs to know *before* saving, not after.
+const errorMessages: Record<string, string> = {
+    // Emitted whenever the form could not be turned into a payload. Unmapped
+    // in the first version, so the one failure mode most likely to ship was
+    // also the one with no message.
+    missing: "That form couldn't be submitted. Please reload the page and try again.",
+    forbidden: "You don't have permission to edit this chapter's page.",
+    stale: "That section changed while you were editing. Reload and try again.",
+    save: "Something went wrong saving. Please try again.",
+};
+```
 
-When `getPageContent` returns null, render **no forms at all** — same rule as the partners picker: never render an editor over content you could not read.
+When `structureDiverged` is true, show a persistent banner above every form, because the admin needs to know *before* saving rather than after.
+
+When `getPageContent` returns null, render **no forms at all** — same rule as the partners picker: never render an editor over content you could not read. **Say which failure it was**, using `messageOf` from `client.ts`: a `pdx` admin should see "This chapter has no microsite page yet", not a blank screen. Have `getPageContent` return a discriminated result rather than bare `null` so the page can tell 404 from 403 from a transport failure.
 
 - [ ] **Step 5: Nav entry**
 
@@ -1350,7 +1864,7 @@ cd /Users/nk/Projects/AREAA/areaa-frontend && npm run check
 cd /Users/nk/Projects/AREAA/areaa-frontend && npm test
 ```
 
-Expected: 0 errors, then **88 passed** (75 + 7 payload + 6 render).
+Expected: 0 errors, then **90 passed** (75 + 7 payload + 8 render).
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-frontend && \
@@ -1378,7 +1892,7 @@ cd /Users/nk/Projects/AREAA/areaa-frontend && npm test
 cd /Users/nk/Projects/AREAA/areaa-frontend && npm run check
 ```
 
-Expected: **220 CMS**, **88 frontend**, 0 typecheck errors.
+Expected: **235 CMS**, **90 frontend**, 0 typecheck errors.
 
 - [ ] **Step 2: Twice, with the zone structure unchanged**
 
@@ -1398,13 +1912,39 @@ Expected: `ZONE STRUCTURE IDENTICAL`. This is the plan's central safety claim; a
 
 ### Task 8: Prove it in a browser
 
-- [ ] **Step 1: Snapshot the live copy**
+- [ ] **Step 1: Snapshot the live copy AS RESTORABLE JSON**
+
+Titles alone are not enough — Step 2 row 5 edits a **body**, and Step 3 replaces
+one. Capture every editable column as JSON so the restore is mechanical:
 
 ```bash
-cd /Users/nk/Projects/AREAA/areaa-cms && \
-  sqlite3 .tmp/data.db "SELECT 'sec', id, title FROM components_shared_sections UNION ALL SELECT 'hero', id, title FROM components_shared_heroes UNION ALL SELECT 'contact', id, title FROM components_shared_contact_forms ORDER BY 1, 2;" > /tmp/p5-copy-before.txt && \
-  wc -l < /tmp/p5-copy-before.txt
+cd /Users/nk/Projects/AREAA/areaa-cms && PATH="/opt/homebrew/bin:$PATH" node -e '
+const fs = require("fs");
+const { createStrapi, compileStrapi } = require("@strapi/strapi");
+const FIELDS = ["title", "body", "intro", "submitLabel", "caption"];
+(async () => {
+  const app = await createStrapi(await compileStrapi()).load();
+  app.log.level = "error";
+  const rows = await app.db.connection("pages_cmps as z")
+    .join("pages as p", "p.id", "z.entity_id")
+    .join("pages_chapter_lnk as l", "l.page_id", "p.id")
+    .join("chapters as c", "c.id", "l.chapter_id")
+    .andWhere("p.slug", "home")
+    .select("z.cmp_id", "z.component_type", "c.slug");
+  const snap = [];
+  for (const r of rows) {
+    const row = await app.db.query(r.component_type).findOne({ where: { id: r.cmp_id } });
+    if (!row) continue;
+    snap.push({ id: r.cmp_id, type: r.component_type, chapter: r.slug,
+      values: Object.fromEntries(FIELDS.filter((f) => f in row).map((f) => [f, row[f]])) });
+  }
+  fs.writeFileSync("/tmp/p5-copy-before.json", JSON.stringify(snap, null, 2));
+  console.log("snapshotted", snap.length, "components");
+  await app.destroy(); process.exit(0);
+})();'
 ```
+
+Keep `/tmp/p5-copy-before.json` until Step 5 has verified the restore.
 
 - [ ] **Step 2: Start both servers, walk it as `chapadmin@areaa.test`**
 
@@ -1416,13 +1956,23 @@ cd /Users/nk/Projects/AREAA/areaa-cms && \
 | 4 | **Visit `/chapters/aloha-hawaii`** | The heading changed on the public page |
 | 5 | Edit a body over several lines → Save → reload | Paragraphs preserved; public page shows them |
 | 6 | Contact Form card | Heading, Intro and Button Label offered — **no notificationEmails field anywhere in the HTML** |
-| 7 | Partners / Member Group cards | Heading only; no picker, no member list |
-| 8 | Disable JavaScript, repeat 3 | Works identically |
+| 7 | Partners / Member Group cards | Heading only; no picker, no member list. *(Note: `readOnlyReason: 'not-editable'` is NOT reachable here — all nine component types on a chapter zone are in the whitelist. The unit test is its only coverage.)* |
+| 8 | Disable JavaScript, repeat 3 **and 5** | Both work identically; re-check the public page after each |
+| 14 | Make one published row differ (Step 3's script pattern), then edit that section | "Saved to your draft… unpublished changes from AREAA national"; public page unchanged; `wrote: 1` |
 | 9 | View source on the Page screen | `notificationEmails` appears nowhere |
 
 - [ ] **Step 3: Exercise the rich-body guard, which the seed cannot reach**
 
-Sections 4 and 5 carry marks but are not on any page, so plant one:
+Sections 4 and 5 carry marks but are not on any page, so plant one.
+
+**Stop `strapi develop` first.** The script below boots a second Strapi against
+the same SQLite file, which runs bootstrap and schema sync while the dev server
+holds it. And run this **before** Step 2 row 5 edits a body, or the "original"
+it captures is already the walkthrough's own text:
+
+```bash
+pkill -f "strapi develop" ; sleep 2
+```
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-cms && PATH="/opt/homebrew/bin:$PATH" node -e '
@@ -1464,9 +2014,44 @@ const { createStrapi, compileStrapi } = require("@strapi/strapi");
 | 12 | Chapter A → Page, edit a heading | Only A's page changes; B's is untouched |
 | 13 | Open B's Page | B's own copy, not A's |
 
-- [ ] **Step 5: Restore and stop**
+- [ ] **Step 5: Restore, verify, then stop**
 
-Script the restore from `/tmp/p5-copy-before.txt` **before** killing the servers — plan 4 learned this the hard way. Then:
+Run this **before** killing anything — plan 4 shipped a walkthrough whose
+restore was impossible to perform after the servers were gone:
+
+```bash
+cd /Users/nk/Projects/AREAA/areaa-cms && pkill -f "strapi develop" ; sleep 2
+cd /Users/nk/Projects/AREAA/areaa-cms && PATH="/opt/homebrew/bin:$PATH" node -e '
+const fs = require("fs");
+const { createStrapi, compileStrapi } = require("@strapi/strapi");
+(async () => {
+  const app = await createStrapi(await compileStrapi()).load();
+  app.log.level = "error";
+  const snap = JSON.parse(fs.readFileSync("/tmp/p5-copy-before.json", "utf8"));
+  let n = 0;
+  for (const c of snap) {
+    if (Object.keys(c.values).length === 0) continue;
+    await app.db.query(c.type).update({ where: { id: c.id }, data: c.values });
+    n += 1;
+  }
+  console.log("restored", n, "components");
+  await app.destroy(); process.exit(0);
+})();'
+```
+
+Each row is restored **at its own id**, so draft and published keep whatever
+they held — including aloha's hero, whose two statuses legitimately differ.
+
+Verify against the snapshot before believing it:
+
+```bash
+cd /Users/nk/Projects/AREAA/areaa-cms && \
+  sqlite3 .tmp/data.db < /tmp/p5-copy.sql > /tmp/p5-walk-after.txt && \
+  sqlite3 .tmp/data.db < /tmp/p5-copy.sql > /dev/null && \
+  diff <(sqlite3 .tmp/data.db < /tmp/p5-copy.sql) /tmp/p5-before.txt && echo "COPY RESTORED"
+```
+
+Then:
 
 ```bash
 pkill -f "strapi develop" ; pkill -f "astro dev" ; sleep 2
@@ -1478,14 +2063,17 @@ cd /Users/nk/Projects/AREAA/areaa-frontend && git status --short
 
 ## Done when
 
-- **220 CMS and 88 frontend tests green**, CMS twice, with `pages_cmps` byte-identical across runs.
+- **235 CMS and 90 frontend tests green**, CMS twice, with `pages_cmps` byte-identical across runs.
 - A chapter admin edits a heading and body on `/page`, **with JavaScript disabled**, and the public microsite shows the change.
 - **No component is added, removed or reordered by any save** — proven by comparing `pages_cmps` before and after.
-- Both the draft and published component rows are written; a save that could only reach the draft reports `wrote: 1` and the screen says the live page has not changed.
+- Both rows are written **only when their content already agrees**; otherwise the draft alone is written, `wrote: 1` comes back with a `skipReason`, and the screen says which of the three reasons applies. *(Integration test plus walkthrough row 14.)*
+- **A same-type reorder cannot write the wrong component.** *(Unit test on `pairZones` plus the content-parity integration test — not reachable from the walkthrough.)*
+- **A malformed `index` — `null`, `''`, `false` — 400s rather than rewriting the hero.** *(Integration test only.)*
 - `notificationEmails` appears nowhere in the API response or the rendered HTML.
 - A section whose body carries formatting renders **no body textarea**, and a write to it 400s.
 - Relations and media are absent from every form on the screen.
-- A chapter with no home page gets a 404 explaining why.
+- A chapter with no home page gets a 404 **and the screen says so**, rather than rendering blank. *(Integration test for the status; the rendered message is walkthrough-only, since `pdx` has no admin account — create one or accept that this is unproven in the browser.)*
+- The zone-copy restore gate is **demonstrated to fail** on a hand-made change before it is trusted.
 
 ## Not in this plan
 
@@ -1499,7 +2087,8 @@ cd /Users/nk/Projects/AREAA/areaa-frontend && git status --short
 
 - **A rich body is uneditable, not just unformatted.** An admin with a bold word in their section cannot fix a typo in it from this screen. Correct until plan 6, but it will be reported as a bug — the note in the UI is what makes it legible rather than mysterious.
 - **`wrote: 1` is a soft failure.** The save succeeded and the live page did not change. The screen says so, but nothing in this plan lets the admin publish; that stays national.
-- **Positional pairing assumes the two zones stay in step.** Verified true on all three chapters today, and guarded when it is not — but the guard degrades to draft-only rather than resolving the divergence.
+- **Positional pairing is guarded by content, not by structure.** The type-sequence check catches an added or removed component; it does **not** catch a same-type reorder, which is why the published write additionally requires content parity. The cost is that any legitimate draft/published difference — including an unpublished national edit, which exists on aloha's hero today — makes the published write unreachable until national publishes. `wrote: 1` will therefore be common, not exceptional, and the screen has to say so clearly rather than treating it as an edge case.
+- **A chapter admin cannot resolve a divergence.** When content parity fails they can only edit the draft; publishing stays national. The screen explains this; nothing in this plan lets them act on it.
 - **No optimistic-concurrency check.** Two admins editing the same section overwrite each other last-write-wins, exactly as every other form in this system. The rich-body re-check on write is the only staleness guard.
 - **No edit history.** Overwriting national copy is unrecoverable from the app; Strapi's admin panel is the only trail.
-- **`blocks.ts` still says TipTap arrives in "plan 4".** Stale — it is plan 6. Fix the comment in Task 5, where that file is already open.
+- **Two independent copies of `textToBlocks`** — one in the CMS (`page-content.js`), one in the frontend (`blocks.ts`) — with nothing asserting they agree. They must, or a body saved through `/page` renders differently from one saved through the event form. A shared fixture tested on both sides would close it; deferred.
