@@ -753,7 +753,7 @@ cd /Users/nk/Projects/AREAA/areaa-cms && \
 Two commands, separately — chaining with `;` lets a failing test scroll past under Strapi's boot output:
 
 ```bash
-PATH="/opt/homebrew/bin:$PATH" \
+cd /Users/nk/Projects/AREAA/areaa-cms && PATH="/opt/homebrew/bin:$PATH" \
   npx vitest run tests/unit/grants.test.js
 cd /Users/nk/Projects/AREAA/areaa-cms && pkill -f "strapi develop" ; \
   PATH="/opt/homebrew/bin:$PATH" node scripts/boot-once.js && \
