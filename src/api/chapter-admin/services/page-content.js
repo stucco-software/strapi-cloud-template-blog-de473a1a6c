@@ -1,0 +1,211 @@
+'use strict';
+
+const { BadInputError } = require('./fields');
+
+/** Body text cap. Generous — this is a page section, not a tweet. */
+const MAX_BODY_LEN = 20000;
+
+/**
+ * Cap for single-line text, checked against what is actually stored: the
+ * longest seeded values are `intro` 51, titles 33, `caption` 32.
+ *
+ * It matters that this is not tight. The form posts EVERY editable field of a
+ * section at once, so a cap below an existing value would make that section
+ * permanently unsaveable -- including its title. 500 was the first version's
+ * number and was never checked against the content it applies to.
+ */
+const MAX_TEXT_LEN = 2000;
+
+/**
+ * What a chapter admin may edit, per component type.
+ *
+ * TEXT ONLY, and deliberately narrow. Everything absent from this map is
+ * absent on purpose:
+ *
+ *  - `notificationEmails` is a staff routing address. Editable here would mean
+ *    readable in the API response and from there rendered into a page.
+ *  - `videoUrl`, `feedUrl`, `platform` change what is EMBEDDED, not what is
+ *    written. A chapter admin repointing an embed is a different decision from
+ *    fixing a typo.
+ *  - relations (`members`, `partners`, `events`, `newsItems`, `resources`) have
+ *    their own screens; `partners` got plan 4.
+ *  - media (`figure`, `photos`) needs the upload flow and its own failure modes.
+ *  - nested components (`primaryCta`, `fields`, `items`) are repeatable
+ *    sub-editors, each its own piece of UI.
+ *
+ * A type missing from this map renders READ-ONLY. That is the safe default for
+ * a component added to the CMS after this plan shipped.
+ */
+const EDITABLE_BY_TYPE = {
+  'shared.hero': ['title', 'body'],
+  'shared.section': ['title', 'body'],
+  'shared.partner-callout': ['title', 'body'],
+  'shared.contact-form': ['title', 'intro', 'submitLabel'],
+  'shared.video-embed': ['title', 'caption'],
+  'shared.gallery': ['title'],
+  'shared.upcoming-events': ['title'],
+  'shared.news-and-resources': ['title'],
+  'shared.member-group': ['title'],
+  'shared.partner-group': ['title'],
+  'shared.social-media-feed': ['title'],
+  'shared.faq': ['title'],
+};
+
+const BLOCK_FIELDS = new Set(['body']);
+
+function editableFieldsFor(type) {
+  return EDITABLE_BY_TYPE[type] ?? [];
+}
+
+/**
+ * Is this `blocks` value something a plain textarea can round-trip losslessly?
+ *
+ * `blocksToPlainText` says of itself that it flattens headings, lists and links
+ * down to lines, and `textToBlocks` emits paragraphs only. So editing anything
+ * richer through the textarea SILENTLY DESTROYS a national author's formatting.
+ * Components failing this check render read-only until plan 6 brings a real
+ * editor.
+ *
+ * Rich content exists today: `components_shared_sections` 4 and 5 carry marks.
+ */
+function isPlainBlocks(blocks) {
+  if (blocks === null || blocks === undefined) return true;
+  if (!Array.isArray(blocks)) return false;
+
+  for (const block of blocks) {
+    if (!block || typeof block !== 'object') return false;
+    if (block.type !== 'paragraph') return false;
+
+    let text = '';
+    for (const child of block.children ?? []) {
+      if (!child || typeof child !== 'object') return false;
+      if (child.type !== 'text') return false;          // links, images, anything else
+      // Any mark at all — bold, italic, underline, strikethrough, code.
+      // `bold: false` counts too: some serialisers emit explicit false marks
+      // after a toggle, and this errs toward read-only rather than toward loss.
+      for (const key of Object.keys(child)) {
+        if (key !== 'type' && key !== 'text') return false;
+      }
+      text += child.text ?? '';
+    }
+
+    // Must survive blocksToText -> textToBlocks unchanged. A blank or
+    // whitespace-only paragraph is a deliberate spacer that both functions
+    // drop, so an UNEDITED save would delete it. Rejecting it here keeps the
+    // guard's promise literally true: anything this accepts is safe to edit.
+    if (text.trim() === '') return false;
+  }
+  return true;
+}
+
+/**
+ * Blocks -> the text a textarea shows. The inverse of textToBlocks for every
+ * shape isPlainBlocks accepts; see the round-trip test, which is the property
+ * the rich-body guard actually rests on.
+ */
+function blocksToText(blocks) {
+  if (!Array.isArray(blocks)) return '';
+  return blocks
+    .map((b) => (b?.children ?? []).map((c) => c?.text ?? '').join(''))
+    .join('\n');
+}
+
+/**
+ * Do these two component rows agree on the fields about to be written?
+ *
+ * This is what gates the published write. Position plus type is not proof two
+ * rows are the same component, and an unpublished national edit is not a
+ * mispairing but must be treated the same way -- hands off published.
+ *
+ * NULL and '' compare equal: Strapi returns NULL for a never-set optional
+ * column and '' for a cleared one, and treating that as divergence would make
+ * the published write permanently unreachable on ordinary content.
+ */
+function sameForFields(a, b, fields) {
+  const norm = (v) => (v === null || v === undefined ? '' : v);
+  for (const field of fields) {
+    if (JSON.stringify(norm(a?.[field])) !== JSON.stringify(norm(b?.[field]))) return false;
+  }
+  return true;
+}
+
+/** Plain text -> paragraph blocks. Mirrors the frontend's textToBlocks. */
+function textToBlocks(text) {
+  return String(text ?? '')
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => ({ type: 'paragraph', children: [{ type: 'text', text: line }] }));
+}
+
+/**
+ * Submitted values -> the data written to ONE component row.
+ *
+ * Absent means unchanged: the form edits one component at a time, so a missing
+ * key is "not on this form", not "clear it". Present-and-empty DOES clear,
+ * because these are optional strings and an admin removing a heading is a
+ * legitimate edit.
+ */
+function shapeComponentEdit(input, type) {
+  const allowed = editableFieldsFor(type);
+  const data = {};
+
+  for (const field of allowed) {
+    if (!(field in input)) continue;
+
+    const raw = input[field];
+    if (raw !== null && typeof raw === 'object') {
+      throw new BadInputError(`${field} must be text`);
+    }
+    const text = raw === null || raw === undefined ? '' : String(raw);
+
+    if (BLOCK_FIELDS.has(field)) {
+      if (text.length > MAX_BODY_LEN) throw new BadInputError(`${field} is too long`);
+      data[field] = textToBlocks(text);
+    } else {
+      if (text.length > MAX_TEXT_LEN) throw new BadInputError(`${field} is too long`);
+      data[field] = text.trim();
+    }
+  }
+
+  if (Object.keys(data).length === 0) {
+    // Without this the route writes {}, returns 200, and the admin believes a
+    // save happened.
+    throw new BadInputError('Nothing editable was submitted');
+  }
+  return data;
+}
+
+/**
+ * Pair each draft component with its published counterpart, BY POSITION.
+ *
+ * Position, not type: a real chapter zone holds three `shared.member-group`
+ * components, so type is ambiguous. Not `id + 1` either — consecutive ids are
+ * an artefact of seeding order, not a guarantee.
+ *
+ * Returns null when the two zones have different shapes. That happens when the
+ * draft has been restructured and not published, and writing published by
+ * position would then put one component's text into another. The caller must
+ * degrade to a draft-only write and say so, never guess.
+ */
+function pairZones(draft, published) {
+  const d = draft ?? [];
+  if (!published) {
+    return d.map((c, index) => ({
+      draftId: c.id, publishedId: null, type: c.__component, index,
+    }));
+  }
+  if (published.length !== d.length) return null;
+  for (let i = 0; i < d.length; i += 1) {
+    if (d[i].__component !== published[i].__component) return null;
+  }
+  return d.map((c, index) => ({
+    draftId: c.id, publishedId: published[index].id, type: c.__component, index,
+  }));
+}
+
+module.exports = {
+  EDITABLE_BY_TYPE, editableFieldsFor, isPlainBlocks, textToBlocks, blocksToText,
+  shapeComponentEdit, pairZones, sameForFields, MAX_BODY_LEN, MAX_TEXT_LEN,
+};

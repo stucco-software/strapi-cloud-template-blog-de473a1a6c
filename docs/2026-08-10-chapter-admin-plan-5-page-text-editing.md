@@ -230,8 +230,18 @@ describe('isPlainBlocks', () => {
   });
 
   it('REJECTS headings and lists', () => {
-    expect(isPlainBlocks([{ type: 'heading', level: 2, children: [] }])).toBe(false);
-    expect(isPlainBlocks([{ type: 'list', children: [] }])).toBe(false);
+    // Children carry real text, so the PARAGRAPH-TYPE check is what rejects
+    // these. With `children: []` the spacer guard catches them instead and the
+    // type check becomes unprotected — the mutation gate found exactly that.
+    expect(isPlainBlocks([
+      { type: 'heading', level: 2, children: [{ type: 'text', text: 'Heading' }] },
+    ])).toBe(false);
+    expect(isPlainBlocks([
+      { type: 'list', format: 'unordered', children: [{ type: 'text', text: 'Item' }] },
+    ])).toBe(false);
+    expect(isPlainBlocks([
+      { type: 'quote', children: [{ type: 'text', text: 'Quoted' }] },
+    ])).toBe(false);
   });
 
   it('rejects a non-array rather than assuming it is safe', () => {
