@@ -16,6 +16,10 @@ const { uploadImage } = require('../services/media');
 const {
   toPartnerRow, normalisePartnerIds, findPartnerGroups,
 } = require('../services/partners');
+const {
+  editableFieldsFor, isPlainBlocks, shapeComponentEdit, findPageZones,
+  blocksToText, sameForFields,
+} = require('../services/page-content');
 
 // Mirrors api::event.event minus `chapter` and `slug`, both set at create and
 // immutable after.
@@ -308,5 +312,142 @@ module.exports = {
     }
 
     ctx.body = { data: { chapterSlug: chapter.slug, attached: ids.length } };
+  }),
+
+  // --- page text ----------------------------------------------------------
+  // Chapter admins edit COPY, never structure. Nothing here writes
+  // `page.components`: dynamic zones are replace-on-write, so assigning the
+  // array would rewrite every component including ones this screen never
+  // rendered. Each save updates one component ROW by id, exactly as the
+  // partner-group write does.
+  getPage: guarded(async (ctx) => {
+    const { chapter, error, notFound } = await resolveScopedChapter(ctx, ctx.query.chapterSlug);
+    if (error) return notFound ? ctx.notFound(error) : ctx.badRequest(error);
+
+    const found = await findPageZones(strapi, chapter.slug);
+    if (found.error === 'no-home-page') {
+      return ctx.notFound('This chapter has no microsite page yet');
+    }
+
+    // Read each draft component row for its current values. The draft is what
+    // the admin edits; published is only ever a write target.
+    const sections = [];
+    for (const pair of found.pairs) {
+      const fields = editableFieldsFor(pair.type);
+      const row = await strapi.db.query(pair.type).findOne({ where: { id: pair.draftId } });
+
+      // `body` is editable only when a plain textarea can round-trip it.
+      // blocksToPlainText flattens headings, lists and links, so offering a
+      // textarea over rich content would silently strip a national author's
+      // formatting on the next save.
+      const bodyIsRich = fields.includes('body') && !isPlainBlocks(row?.body);
+      const editable = bodyIsRich ? fields.filter((f) => f !== 'body') : fields;
+
+      sections.push({
+        index: pair.index,
+        type: pair.type,
+        draftId: pair.draftId,
+        editable,
+        readOnlyReason:
+          editable.length === 0 ? 'not-editable' : bodyIsRich ? 'rich-body' : null,
+        values: Object.fromEntries(
+          editable.map((f) => [f, f === 'body' ? blocksToText(row?.body) : (row?.[f] ?? '')])),
+      });
+    }
+
+    ctx.body = {
+      data: sections,
+      meta: { structureDiverged: found.structureDiverged },
+    };
+  }),
+
+  updatePage: guarded(async (ctx) => {
+    const input = ctx.request.body?.data ?? ctx.request.body ?? {};
+    const { chapter, error, notFound } = await resolveScopedChapter(ctx, input.chapterSlug);
+    if (error) return notFound ? ctx.notFound(error) : ctx.badRequest(error);
+
+    const found = await findPageZones(strapi, chapter.slug);
+    if (found.error === 'no-home-page') {
+      return ctx.notFound('This chapter has no microsite page yet');
+    }
+
+    // Address the component by its POSITION in the zone, not by a raw component
+    // id from the payload. A client-supplied id could name a component on
+    // another chapter's page — position is meaningless outside this zone, so it
+    // cannot be pointed anywhere else.
+    //
+    // Validate BEFORE coercing. `Number(null)`, `Number('')` and `Number(false)`
+    // are all 0, and index 0 is the hero — so a dropped or malformed field
+    // would rewrite the page's headline at both statuses and return 200.
+    // Verified reachable: {index: null} rewrote the hero. The client-side
+    // mapper guards this too, but the server is the boundary.
+    if (typeof input.index !== 'number' && typeof input.index !== 'string') {
+      return ctx.badRequest('No such section on this page');
+    }
+    const index = Number(input.index);
+    if (!Number.isInteger(index) || index < 0) {
+      return ctx.badRequest('No such section on this page');
+    }
+    const pair = found.pairs.find((p) => p.index === index);
+    if (!pair) return ctx.badRequest('No such section on this page');
+
+    const row = await strapi.db.query(pair.type).findOne({ where: { id: pair.draftId } });
+    if (!row) return ctx.notFound('That section no longer exists');
+
+    // Re-check the rich-body guard on WRITE, not just on read. The read that
+    // built the form may be minutes old, and a national author may have added
+    // formatting since.
+    if ('body' in input && !isPlainBlocks(row.body)) {
+      return ctx.badRequest(
+        'That section now contains formatting this editor would remove. Reload the page.');
+    }
+
+    let data;
+    try {
+      data = shapeComponentEdit(input, pair.type);
+    } catch (err) {
+      if (err instanceof BadInputError) return ctx.badRequest(err.message);
+      throw err;
+    }
+
+    // CONTENT PARITY gates the published write.
+    //
+    // Position plus matching type is not proof the two rows are the same
+    // component: a zone holds three member-groups, and a same-type reorder in
+    // the draft produces a pairing that looks perfect and is wrong. Reproduced
+    // against real data — an admin edited "Board of Directors" and the public
+    // site's "Executive Committee" heading changed, reporting wrote: 2.
+    //
+    // The same check also stops a chapter admin's unrelated save PUBLISHING an
+    // unpublished national draft edit. aloha's hero is in exactly that state
+    // today (draft "Chorp Chipper", published "Our Chapter").
+    //
+    // Compare the PRE-EDIT draft values, field by field, against the published
+    // row. Equal => same component, safe to write both. Different => either a
+    // mispairing or an unpublished edit, and both mean hands off published.
+    let publishedId = pair.publishedId;
+    let skipReason = null;
+    if (publishedId !== null) {
+      const pubRow = await strapi.db.query(pair.type).findOne({ where: { id: publishedId } });
+      if (!pubRow || !sameForFields(row, pubRow, Object.keys(data))) {
+        publishedId = null;
+        skipReason = 'content-diverged';
+      }
+    } else {
+      skipReason = found.structureDiverged ? 'structure-diverged' : 'never-published';
+    }
+
+    const targets = [pair.draftId, publishedId].filter((id) => id !== null);
+    for (const id of targets) {
+      await strapi.db.query(pair.type).update({ where: { id }, data });
+    }
+
+    ctx.body = {
+      data: { index, type: pair.type, wrote: targets.length },
+      // `skipReason` distinguishes the three ways a save reaches the draft only.
+      // The screen must say WHICH — "contact national to publish" is wrong
+      // advice for a page that has simply never been published.
+      meta: { structureDiverged: found.structureDiverged, skipReason },
+    };
   }),
 };

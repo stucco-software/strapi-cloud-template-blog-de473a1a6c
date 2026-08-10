@@ -38,6 +38,9 @@ module.exports = {
     { method: 'GET', path: '/chapter-admin/partners', handler: 'chapter-admin.listPartners' },
     { method: 'PUT', path: '/chapter-admin/partners', handler: 'chapter-admin.updatePartners' },
 
+    { method: 'GET', path: '/chapter-admin/page', handler: 'chapter-admin.getPage' },
+    { method: 'PUT', path: '/chapter-admin/page', handler: 'chapter-admin.updatePage' },
+
     { method: 'GET',    path: '/chapter-admin/submissions',             handler: 'chapter-admin.listSubmissions' },
     { method: 'PUT',    path: '/chapter-admin/submissions/:documentId', handler: 'chapter-admin.updateSubmission' },
   ],
