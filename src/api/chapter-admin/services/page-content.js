@@ -342,9 +342,24 @@ const MEDIA_SLOTS = {
 
 const mediaSlotFor = (type) => MEDIA_SLOTS[type] ?? null;
 
+/**
+ * Which component types carry an editable ROSTER, and under which field.
+ *
+ * `shared.member-group` is what the microsite actually renders for a chapter's
+ * committees and boards — heading plus roster. The `api::committee` collection
+ * is a separate dataset that no public page reads, so editing a committee there
+ * changes nothing a visitor can see.
+ */
+const MEMBER_SLOTS = {
+  'shared.member-group': 'members',
+};
+
+const memberSlotFor = (type) => MEMBER_SLOTS[type] ?? null;
+
 module.exports = {
   EDITABLE_BY_TYPE, editableFieldsFor, isPlainBlocks, textToBlocks, blocksToText,
   shapeComponentEdit, pairZones, sameForFields, findPageZones,
   CTA_SLOTS, ctaSlotsFor, shapeCtaEdit, CMPS_TABLE, MEDIA_SLOTS, mediaSlotFor,
+  MEMBER_SLOTS, memberSlotFor,
   MAX_BODY_LEN, MAX_TEXT_LEN,
 };

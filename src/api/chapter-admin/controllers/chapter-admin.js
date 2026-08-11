@@ -10,7 +10,7 @@ const {
 const { SlugError } = require('../services/slug');
 const { BadInputError, pickWhitelisted } = require('../services/fields');
 const {
-  toDirectoryRow, normaliseMemberIds, assertMembersInChapter,
+  toDirectoryRow, normaliseMemberIds, assertMembersInChapter, resolveMemberRowIds,
 } = require('../services/members');
 const { uploadImage } = require('../services/media');
 const {
@@ -19,6 +19,7 @@ const {
 const {
   editableFieldsFor, isPlainBlocks, shapeComponentEdit, findPageZones,
   blocksToText, sameForFields, ctaSlotsFor, shapeCtaEdit, CMPS_TABLE, mediaSlotFor,
+  memberSlotFor,
 } = require('../services/page-content');
 
 // Mirrors api::event.event minus `chapter` and `slug`, both set at create and
@@ -346,9 +347,13 @@ module.exports = {
     for (const pair of found.pairs) {
       const fields = editableFieldsFor(pair.type);
       const slot = mediaSlotFor(pair.type);
+      const roster = memberSlotFor(pair.type);
       const row = await strapi.db.query(pair.type).findOne({
         where: { id: pair.draftId },
-        ...(slot ? { populate: { [slot]: true } } : {}),
+        populate: {
+          ...(slot ? { [slot]: true } : {}),
+          ...(roster ? { [roster]: true } : {}),
+        },
       });
 
       // `body` is editable only when a plain textarea can round-trip it.
@@ -372,6 +377,11 @@ module.exports = {
           return cta ? { slot: ctaSlot, label: cta.label ?? '', href: cta.href ?? '' } : null;
         })).then((list) => list.filter(Boolean)),
         image: slot ? { slot, url: row?.[slot]?.url ?? null } : null,
+        // The roster the microsite renders under this heading. documentIds, to
+        // match the picker every other screen posts.
+        members: roster
+          ? { slot: roster, selected: (row?.[roster] ?? []).map((m) => m.documentId) }
+          : null,
       });
     }
 
@@ -434,7 +444,8 @@ module.exports = {
     // cta-only save returned `400 Nothing editable was submitted`, three of
     // this plan's own tests failed, and four more passed against a guard that
     // never reached the code they name.
-    const hasExtras = Boolean(input.ctas) || input.figureId !== undefined;
+    const hasExtras = Boolean(input.ctas) || input.figureId !== undefined
+      || input.members !== undefined || Boolean(input.members__present);
     let data = {};
     try {
       data = shapeComponentEdit(input, pair.type);
@@ -505,6 +516,42 @@ module.exports = {
     // So: compare the figures. Same file on both => they are in step, write
     // both. Different => someone changed one without the other, and publishing
     // is not ours to do.
+    // --- roster ------------------------------------------------------------
+    // The member-group is what the microsite actually renders for a chapter's
+    // committees and boards. Editing an `api::committee` record changes nothing
+    // a visitor sees — no public page reads that collection.
+    //
+    // `members__present` distinguishes "cleared to empty" from "this form did
+    // not carry a roster at all". Without it an empty multi-select and an
+    // absent field are the same request, and one of them must not wipe.
+    const rosterSlot = memberSlotFor(pair.type);
+    let rosterIds = null;
+    let rosterTargets = [];
+    if (input.members__present || input.members !== undefined) {
+      if (!rosterSlot) return ctx.badRequest('This section has no member list');
+      // BadInputError -> 400, ScopeError -> 403, both via `guarded`. The scope
+      // check is the boundary: without it any user documentId at all can be
+      // attached and the public microsite then shows them as this chapter's.
+      const docIds = normaliseMemberIds(input.members ?? []);
+      await assertMembersInChapter(strapi, chapter.documentId, docIds);
+      rosterIds = await resolveMemberRowIds(strapi, docIds);
+
+      rosterTargets = [pair.draftId];
+      if (pair.publishedId) {
+        // Its OWN gate, on its own field — `Object.keys(data)` is empty on a
+        // roster-only save, so borrowing the text's comparison would compare
+        // nothing and return true.
+        const [dRow, pRow] = await Promise.all([
+          strapi.db.query(pair.type).findOne({
+            where: { id: pair.draftId }, populate: { [rosterSlot]: true } }),
+          strapi.db.query(pair.type).findOne({
+            where: { id: pair.publishedId }, populate: { [rosterSlot]: true } }),
+        ]);
+        const ids = (r) => (r?.[rosterSlot] ?? []).map((m) => m.id).join(',');
+        if (!pair.ambiguous || ids(dRow) === ids(pRow)) rosterTargets.push(pair.publishedId);
+      }
+    }
+
     const slotName = mediaSlotFor(pair.type);
     let figureId = null;
     let imageTargets = [];
@@ -579,11 +626,17 @@ module.exports = {
     for (const id of imageTargets) {
       await strapi.db.query(pair.type).update({ where: { id }, data: { [slotName]: figureId } });
     }
+    for (const id of rosterTargets) {
+      // Order is meaningful — it is the order the roster renders in — and
+      // `db.query` preserves the array it is given.
+      await strapi.db.query(pair.type).update({ where: { id }, data: { [rosterSlot]: rosterIds } });
+    }
 
     const facets = [];
     if (Object.keys(data).length > 0) facets.push({ kind: 'text', wrote: targets.length });
     for (const c of ctaPlan) facets.push({ kind: 'button', slot: c.slot, wrote: c.writeBoth ? 2 : 1 });
     if (imageTargets.length > 0) facets.push({ kind: 'image', wrote: imageTargets.length });
+    if (rosterTargets.length > 0) facets.push({ kind: 'members', wrote: rosterTargets.length });
 
     const live = facets.filter((f) => f.wrote === 2).length;
     const held = facets.filter((f) => f.wrote < 2).length;

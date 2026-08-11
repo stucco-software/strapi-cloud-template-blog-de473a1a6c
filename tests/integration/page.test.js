@@ -4,7 +4,7 @@ import { boot, shutdown, jwtFor, makeChapterAdmin, draftChapters } from './helpe
 
 const RUN = Date.now();
 let strapi, chapterA, chapterB, tokenA, sections, snapshot, zoneRows;
-let ctaSnapshot, mediaSnapshot;
+let ctaSnapshot, mediaSnapshot, rosterSnapshot;
 
 /** The draft and published parent ids for one section index. */
 const parentIdsFor = async (index) => {
@@ -104,6 +104,22 @@ beforeAll(async () => {
     }
   }
 
+  // Every member-group roster on this chapter's zone, both statuses. Without
+  // this a green run permanently rewrites aloha's real boards — the roster
+  // lives in its own join table, which neither the text nor the CTA snapshot
+  // touches.
+  rosterSnapshot = [];
+  for (const sec of sections.filter((x) => x.type === 'shared.member-group')) {
+    for (const id of await parentIdsFor(sec.index)) {
+      rosterSnapshot.push({
+        id,
+        userIds: (await strapi.db.connection('components_shared_member_groups_members_lnk')
+          .where({ member_group_id: id }).orderBy('user_ord').select('user_id'))
+          .map((r) => r.user_id),
+      });
+    }
+  }
+
   // Every media relation on this chapter's zone, both statuses.
   //
   // Matched on (related_type, related_id) as a PAIR. `related_id` alone is not
@@ -133,6 +149,10 @@ afterAll(async () => {
       for (const c of ctaSnapshot ?? []) {
         await strapi.db.query('shared.cta')
           .update({ where: { id: c.id }, data: { label: c.label, href: c.href } });
+      }
+      for (const r of rosterSnapshot ?? []) {
+        await strapi.db.query('shared.member-group')
+          .update({ where: { id: r.id }, data: { members: r.userIds } });
       }
       for (const m of mediaSnapshot ?? []) {
         await strapi.db.query(m.related_type)
@@ -696,5 +716,97 @@ describe('PUT /api/chapter-admin/page — a diverged unique component is still e
     expect(res.body.meta.skipReason).toBe('content-diverged');
     expect((await strapi.db.query('shared.member-group')
       .findOne({ where: { id: pubId } })).title).toBe('Published Group');
+  });
+});
+
+describe('PUT /api/chapter-admin/page — member roster', () => {
+  const group = () => sections.find((s) => s.type === 'shared.member-group');
+  const rosterOf = async (id) => (await strapi.db.connection(
+    'components_shared_member_groups_members_lnk')
+    .where({ member_group_id: id }).orderBy('user_ord').select('user_id'))
+    .map((r) => r.user_id);
+
+  it('returns the roster the microsite renders under this heading', () => {
+    // The api::committee collection is NOT what the public page reads. Editing
+    // a committee record changes nothing a visitor sees, which is why this had
+    // to move onto the page editor.
+    const g = group();
+    expect(g.members.slot).toBe('members');
+    expect(Array.isArray(g.members.selected)).toBe(true);
+    expect(g.members.selected.length).toBeGreaterThan(0);
+  });
+
+  it('returns null for a section with no roster', () => {
+    expect(sections.find((s) => s.type === 'shared.hero').members).toBeNull();
+  });
+
+  it('replaces the roster, keeping the submitted ORDER', async () => {
+    // Order is the display order on the public page, so it is data, not an
+    // implementation detail.
+    const g = group();
+    const before = await rosterOf(g.draftId);
+    expect(before.length).toBeGreaterThan(1);
+    const docs = [...g.members.selected].reverse();
+
+    const res = await save({ index: g.index, members: docs, members__present: '1' });
+    expect(res.status).toBe(200);
+    expect(await rosterOf(g.draftId)).toEqual([...before].reverse());
+
+    await save({ index: g.index, members: g.members.selected, members__present: '1' });
+    expect(await rosterOf(g.draftId)).toEqual(before);
+  });
+
+  it('ACCEPTS a save carrying only a roster, with no text field', async () => {
+    const g = group();
+    const res = await save({ index: g.index, members: g.members.selected, members__present: '1' });
+    expect(res.status).toBe(200);
+    expect(res.body.data.facets.some((f) => f.kind === 'members')).toBe(true);
+  });
+
+  it('CLEARS the roster when the picker is emptied, but not when it is absent', async () => {
+    const g = group();
+    const before = await rosterOf(g.draftId);
+    try {
+      await save({ index: g.index, members: [], members__present: '1' });
+      expect(await rosterOf(g.draftId)).toEqual([]);
+
+      // No marker, no roster key: a title-only save must leave it alone.
+      await save({ index: g.index, title: `Roster untouched ${RUN}` });
+      expect(await rosterOf(g.draftId)).toEqual([]);
+    } finally {
+      await save({ index: g.index, members: g.members.selected, members__present: '1' });
+      expect(await rosterOf(g.draftId)).toEqual(before);
+    }
+  });
+
+  it('403s a member from ANOTHER chapter — the security boundary', async () => {
+    // Without the scope check any user documentId at all can be attached, and
+    // the microsite then displays a stranger as this chapter's board member.
+    const outsider = await strapi.documents('plugin::users-permissions.user').findFirst({
+      filters: { chapter: { slug: { $ne: chapterA.slug } } }, fields: ['id'],
+    });
+    expect(outsider).toBeTruthy();
+    const g = group();
+    const before = await rosterOf(g.draftId);
+    const res = await save({
+      index: g.index, members: [outsider.documentId], members__present: '1' });
+    expect(res.status).toBe(403);
+    expect(await rosterOf(g.draftId)).toEqual(before);
+  });
+
+  it('400s a roster on a section that has none', async () => {
+    const hero = sections.find((s) => s.type === 'shared.hero');
+    const res = await save({ index: hero.index, members: [], members__present: '1' });
+    expect(res.status).toBe(400);
+  });
+
+  it('400s a malformed roster and writes nothing', async () => {
+    const g = group();
+    const before = await rosterOf(g.draftId);
+    for (const bad of ['nope', [{}], [42]]) {
+      const res = await save({ index: g.index, members: bad, members__present: '1' });
+      expect(res.status, JSON.stringify(bad)).toBe(400);
+    }
+    expect(await rosterOf(g.draftId)).toEqual(before);
   });
 });

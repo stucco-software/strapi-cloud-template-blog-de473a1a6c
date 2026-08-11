@@ -92,6 +92,29 @@ async function assertMembersInChapter(strapiInstance, chapterDocumentId, memberD
   return true;
 }
 
+/**
+ * Member documentIds -> the numeric row ids a component relation needs, IN THE
+ * SUBMITTED ORDER.
+ *
+ * The documents API takes `{documentId}`, but a component's relation is written
+ * through `db.query`, which takes entity ids. `findMany` does not promise the
+ * order it was asked in, and the order is the display order of the roster on
+ * the public page, so map back deliberately rather than using what comes out.
+ *
+ * Call AFTER assertMembersInChapter — this does no scope checking of its own.
+ */
+async function resolveMemberRowIds(strapiInstance, documentIds) {
+  if (documentIds.length === 0) return [];
+  const rows = await strapiInstance.documents('plugin::users-permissions.user').findMany({
+    filters: { documentId: { $in: documentIds } },
+    fields: ['id'],
+    limit: -1,
+  });
+  const byDoc = new Map(rows.map((r) => [r.documentId, r.id]));
+  return documentIds.map((d) => byDoc.get(d)).filter((id) => id !== undefined);
+}
+
 module.exports = {
-  toDirectoryRow, normaliseMemberIds, assertMembersInChapter, MEMBER_FIELDS,
+  toDirectoryRow, normaliseMemberIds, assertMembersInChapter, resolveMemberRowIds,
+  MEMBER_FIELDS,
 };
