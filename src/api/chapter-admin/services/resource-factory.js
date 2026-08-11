@@ -1,7 +1,9 @@
 'use strict';
 
 const { pickWhitelisted } = require('./fields');
-const { assertChapterScope, resolveAdministeredChapters } = require('./scope');
+const {
+  assertChapterScope, assertChapterScopeFor, resolveAuthority,
+} = require('./scope');
 const { buildSlug, nextAvailableSlug, SlugError } = require('./slug');
 
 const DEFAULT_PAGE_SIZE = 25;
@@ -115,7 +117,6 @@ function chapterScopedResource({
      * record is how a cross-chapter edit screen became reachable in plan 3.
      */
     async getOne(ctx) {
-      const administered = await resolveAdministeredChapters(ctx, s());
       const { documentId } = ctx.params;
 
       // getOnePopulate defaults to listPopulate. The edit screen needs at least
@@ -133,7 +134,7 @@ function chapterScopedResource({
       // would confirm to a caller who may not see it that the record exists.
       if (!record.chapter) return ctx.notFound();
 
-      assertChapterScope(administered, record.chapter.documentId);
+      await assertChapterScopeFor(ctx, record.chapter.documentId, s());
 
       const wanted = firstStr(ctx.query?.chapterSlug);
       if (wanted && record.chapter.slug !== wanted) return ctx.notFound();
@@ -142,8 +143,14 @@ function chapterScopedResource({
     },
 
     async list(ctx) {
-      const administered = await resolveAdministeredChapters(ctx, s());
-      if (administered.length === 0) return ctx.forbidden('No administered chapters');
+      const { capabilities, chapters: administered } = await resolveAuthority(ctx, s());
+      // A National Admin is unscoped by decision, so "administers nothing" is
+      // their NORMAL state, not a reason to refuse. Guarding on the count alone
+      // would 403 them on a list they are explicitly entitled to see.
+      const unscoped = capabilities.has('national_admin');
+      if (!unscoped && administered.length === 0) {
+        return ctx.forbidden('No administered chapters');
+      }
 
       const page = Math.max(1, parseInt(ctx.query.page, 10) || 1);
       const pageSize = Math.min(MAX_PAGE_SIZE,
@@ -155,13 +162,18 @@ function chapterScopedResource({
       // nothing. The bare `{documentId: 'x'}` shorthand is equivalent to $eq
       // (verified) — no operator needed.
       const wanted = firstStr(ctx.query?.chapterSlug);
-      let scope = { documentId: { $in: administered } };
+      // $notNull rather than {} for the unscoped case: an empty filter would
+      // also match CHAPTERLESS national records, which getOne 404s on purpose.
+      // "Every chapter" and "no chapter" are different things.
+      let scope = unscoped
+        ? { documentId: { $notNull: true } }
+        : { documentId: { $in: administered } };
       if (wanted) {
         const chapter = await s().documents('api::chapter.chapter').findFirst({
           filters: { slug: wanted }, fields: ['slug'], status: 'draft',
         });
         if (!chapter) return ctx.notFound('No such chapter');
-        assertChapterScope(administered, chapter.documentId);
+        assertChapterScope(administered, chapter.documentId, { unscoped });
         scope = { documentId: chapter.documentId };
       }
 
@@ -189,7 +201,6 @@ function chapterScopedResource({
     },
 
     async create(ctx) {
-      const administered = await resolveAdministeredChapters(ctx, s());
       const input = ctx.request.body?.data ?? ctx.request.body ?? {};
 
       // The payload identifies the chapter by SLUG. The frontend never has an
@@ -205,7 +216,7 @@ function chapterScopedResource({
       });
       if (!chapter) return ctx.notFound('No such chapter');
 
-      assertChapterScope(administered, chapter.documentId);
+      await assertChapterScopeFor(ctx, chapter.documentId, s());
 
       const data = pickWhitelisted(input, editableFields);
       // Longhand relation form: mapRelation's isNumeric() uses parseInt, so a
@@ -240,7 +251,6 @@ function chapterScopedResource({
     },
 
     async update(ctx) {
-      const administered = await resolveAdministeredChapters(ctx, s());
       const { documentId } = ctx.params;
 
       // UPDATE reads the chapter from the STORED RECORD. Any `chapter` in the
@@ -248,7 +258,7 @@ function chapterScopedResource({
       // admin pulling another chapter's record into their own scope.
       const { record, chapterDocumentId } = await ownerChapter(documentId);
       if (!record) return ctx.notFound();
-      assertChapterScope(administered, chapterDocumentId);
+      await assertChapterScopeFor(ctx, chapterDocumentId, s());
 
       const input = ctx.request.body?.data ?? ctx.request.body ?? {};
       const data = pickWhitelisted(input, editableFields);
@@ -264,12 +274,11 @@ function chapterScopedResource({
     },
 
     async delete(ctx) {
-      const administered = await resolveAdministeredChapters(ctx, s());
       const { documentId } = ctx.params;
 
       const { record, chapterDocumentId } = await ownerChapter(documentId);
       if (!record) return ctx.notFound();
-      assertChapterScope(administered, chapterDocumentId);
+      await assertChapterScopeFor(ctx, chapterDocumentId, s());
 
       await docs().delete({ documentId });
       ctx.body = { data: { documentId } };

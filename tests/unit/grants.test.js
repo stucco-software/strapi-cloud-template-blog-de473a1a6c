@@ -12,7 +12,8 @@ const grantedActions = CHAPTER_ADMIN_GRANTS
   .filter((a) => a.startsWith(PREFIX))
   .map((a) => a.slice(PREFIX.length));
 
-const controllerActions = Object.keys(controller);
+// `__`-prefixed exports are metadata, not actions — see __capabilities below.
+const controllerActions = Object.keys(controller).filter((k) => !k.startsWith('__'));
 const routedActions = routes.routes.map((r) => r.handler.replace('chapter-admin.', ''));
 
 describe('chapter-admin wiring', () => {
@@ -30,6 +31,29 @@ describe('chapter-admin wiring', () => {
   it('every routed handler resolves to a function', () => {
     for (const action of routedActions) {
       expect(typeof controller[action]).toBe('function');
+    }
+  });
+});
+
+describe('every action is capability-guarded', () => {
+  it('declares a capability for every exported controller action', () => {
+    // The route table is now a COARSE gate: the role only says "some kind of
+    // admin", because a union of two capabilities is not expressible per-role
+    // (user.role is manyToOne). The specific capability is asserted inside the
+    // handler instead. That makes the in-handler check load-bearing, so an
+    // unwrapped handler is a hole — uploadMedia was exactly that before plan 8.
+    // Diff the lists; counting cannot catch an omission.
+    expect(typeof controller.__capabilities).toBe('object');
+    expect(Object.keys(controller.__capabilities).sort())
+      .toEqual([...controllerActions].sort());
+  });
+
+  it('names a real capability for each', () => {
+    const {
+      CAPABILITY_SLUGS,
+    } = require('../../src/api/chapter-admin/services/capabilities.js');
+    for (const [action, slug] of Object.entries(controller.__capabilities)) {
+      expect(CAPABILITY_SLUGS, `${action} declares ${slug}`).toContain(slug);
     }
   });
 });

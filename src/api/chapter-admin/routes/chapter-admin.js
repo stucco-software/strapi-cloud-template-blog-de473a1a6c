@@ -5,8 +5,13 @@
  *
  * Every route is authenticated-plus-role: users-permissions rejects the request
  * before the handler runs unless the caller's role has the matching action
- * granted. That is the CAPABILITY check. The SCOPE check — which chapter — is
- * enforced inside each handler and is not expressible in this table.
+ * granted. That is a COARSE capability check — the role only says "some kind of
+ * admin", because a union of two capabilities is not expressible per-role
+ * (user.role is manyToOne).
+ *
+ * The SPECIFIC capability and the SCOPE are both enforced inside each handler,
+ * by `guarded` and by assertChapterScope/assertCommitteeScope respectively.
+ * Neither is expressible in this table.
  */
 
 module.exports = {

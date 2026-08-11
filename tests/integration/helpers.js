@@ -69,13 +69,37 @@ export async function jwtFor(strapi, userId) {
   return strapi.plugin('users-permissions').service('jwt').issue({ id: userId });
 }
 
-/** Create a chapter admin. `chapterIds` are numeric DRAFT entry ids. */
-export async function makeChapterAdmin(strapi, { email, chapterIds }) {
+/**
+ * Look up a capability by slug. Returns the numeric id — member-capability is
+ * NOT draft-and-publish, so one capability is one row and one id.
+ */
+export async function capabilityId(strapi, slug) {
+  const cap = await strapi.documents('api::member-capability.member-capability')
+    .findFirst({ filters: { slug } });
+  if (!cap) throw new Error(`No such capability: ${slug}`);
+  return cap.id;
+}
+
+/**
+ * Create a chapter admin. `chapterIds` are numeric DRAFT entry ids.
+ *
+ * Capabilities must be attached explicitly. The boot-time backfill only sees
+ * users that already exist, and these are created after it has run — so a user
+ * minted here with the role alone holds no authority and 403s everywhere.
+ * Pass `capabilities: []` deliberately to build exactly that case.
+ */
+export async function makeChapterAdmin(
+  strapi, { email, chapterIds, capabilities = ['chapter_admin'] }
+) {
   const role = await strapi
     .query('plugin::users-permissions.role')
     .findOne({ where: { type: 'chapter_admin' } });
 
+  const capIds = [];
+  for (const slug of capabilities) capIds.push(await capabilityId(strapi, slug));
+
   return strapi.plugin('users-permissions').service('user').add({
+    capabilities: capIds,
     username: email, email, password: 'Password123!', confirmed: true,
     // Required for POST /api/auth/local to find them: the local strategy filters
     // on `provider: 'local'`, so a user created without it has a valid password

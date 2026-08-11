@@ -117,7 +117,24 @@ async function resolveAdministeredChapters(ctx, strapiInstance = global.strapi) 
   return chapters;
 }
 
+/**
+ * assertChapterScope for a request, with the National Admin bypass applied.
+ *
+ * This exists so the bypass rule lives in ONE place. Threading `unscoped`
+ * through every call site by hand is how one gets forgotten, and a forgotten
+ * one is not a visible bug — it is a national admin being told 403 on a chapter
+ * they are supposed to reach, which reads as a data problem, not a code one.
+ */
+async function assertChapterScopeFor(
+  ctx, targetChapterDocumentId, strapiInstance = global.strapi
+) {
+  const { capabilities, chapters } = await resolveAuthority(ctx, strapiInstance);
+  return assertChapterScope(chapters, targetChapterDocumentId, {
+    unscoped: capabilities.has('national_admin'),
+  });
+}
+
 module.exports = {
-  assertChapterScope, assertCommitteeScope, ScopeError,
+  assertChapterScope, assertCommitteeScope, assertChapterScopeFor, ScopeError,
   resolveAdministeredChapters, resolveAuthority,
 };

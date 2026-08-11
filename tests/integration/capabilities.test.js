@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createRequire } from 'node:module';
-import { boot, shutdown } from './helpers.js';
+import request from 'supertest';
+import {
+  boot, shutdown, draftChapters, jwtFor, makeChapterAdmin,
+} from './helpers.js';
 
 // src/ is CJS throughout; require it the same way tests/unit/grants.test.js does
 // rather than fighting ESM interop for a namespace that has no default export.
@@ -137,5 +140,121 @@ describe('Committee Leader scope', () => {
 
     await strapi.documents('plugin::users-permissions.user')
       .delete({ documentId: user.documentId });
+  });
+});
+
+describe('fail closed', () => {
+  it('403s a user with the role and the scope but no capability', async () => {
+    // The shape of the bug this codebase already shipped once, inverted: scope
+    // and role present, authority absent. It must be a clean 403 — not a 500,
+    // and above all not a silent success.
+    const [chapter] = await draftChapters(strapi, 1);
+    const user = await makeChapterAdmin(strapi, {
+      email: `nocap-${RUN}@areaa.test`, chapterIds: [chapter.id], capabilities: [],
+    });
+    const jwt = await jwtFor(strapi, user.id);
+
+    const res = await request(strapi.server.httpServer)
+      .get(`/api/chapter-admin/events?chapterSlug=${chapter.slug}`)
+      .set('Authorization', `Bearer ${jwt}`);
+
+    expect(res.status).toBe(403);
+  });
+
+  it('403s a committee leader who holds no chapter capability', async () => {
+    // committee_leader has no routes yet by design. Holding it must not open
+    // the chapter-admin surface — the cross-capability attack.
+    const [chapter] = await draftChapters(strapi, 1);
+    const user = await makeChapterAdmin(strapi, {
+      email: `leaderonly-${RUN}@areaa.test`, chapterIds: [chapter.id],
+      capabilities: ['committee_leader'],
+    });
+    const jwt = await jwtFor(strapi, user.id);
+
+    const res = await request(strapi.server.httpServer)
+      .get(`/api/chapter-admin/events?chapterSlug=${chapter.slug}`)
+      .set('Authorization', `Bearer ${jwt}`);
+
+    expect(res.status).toBe(403);
+  });
+
+  it('200s a national admin for a chapter they do not administer', async () => {
+    // The bypass. Scope link deliberately empty: unscoped is a National
+    // Admin's normal state, not a misconfiguration.
+    const [chapter] = await draftChapters(strapi, 1);
+    const user = await makeChapterAdmin(strapi, {
+      email: `national-${RUN}@areaa.test`, chapterIds: [],
+      capabilities: ['national_admin'],
+    });
+    const jwt = await jwtFor(strapi, user.id);
+
+    const res = await request(strapi.server.httpServer)
+      .get(`/api/chapter-admin/events?chapterSlug=${chapter.slug}`)
+      .set('Authorization', `Bearer ${jwt}`);
+
+    expect(res.status).toBe(200);
+  });
+
+  it('lists across every chapter for an unscoped national admin', async () => {
+    // Without chapterSlug, "unscoped" has to mean every chapter — not the
+    // empty set its administeredChapters literally contains.
+    const [chapterA, chapterB] = await draftChapters(strapi, 2);
+    const national = await makeChapterAdmin(strapi, {
+      email: `national-list-${RUN}@areaa.test`, chapterIds: [],
+      capabilities: ['national_admin'],
+    });
+    const scoped = await makeChapterAdmin(strapi, {
+      email: `scoped-list-${RUN}@areaa.test`, chapterIds: [chapterA.id],
+    });
+
+    const [wide, narrow] = await Promise.all([
+      request(strapi.server.httpServer).get('/api/chapter-admin/events')
+        .set('Authorization', `Bearer ${await jwtFor(strapi, national.id)}`),
+      request(strapi.server.httpServer).get('/api/chapter-admin/events')
+        .set('Authorization', `Bearer ${await jwtFor(strapi, scoped.id)}`),
+    ]);
+
+    expect(wide.status).toBe(200);
+    expect(narrow.status).toBe(200);
+
+    // Both must actually return rows, or every assertion below is vacuous.
+    expect(narrow.body.meta.pagination.total).toBeGreaterThan(0);
+
+    // The scoped admin sees their own chapter and nothing else.
+    const narrowChapters = new Set(narrow.body.data.map((r) => r.chapter.slug));
+    expect([...narrowChapters]).toEqual([chapterA.slug]);
+
+    // The national admin sees STRICTLY more, spanning more than one chapter —
+    // including chapterB, which they are not an administrator of.
+    const wideChapters = new Set(wide.body.data.map((r) => r.chapter?.slug));
+    expect(wide.body.meta.pagination.total)
+      .toBeGreaterThan(narrow.body.meta.pagination.total);
+    expect(wideChapters.size).toBeGreaterThan(1);
+    expect(wideChapters).toContain(chapterB.slug);
+
+    // And never a chapterless national record: "every chapter" is not "no
+    // chapter". getOne 404s those, so the list must not surface them either.
+    for (const row of wide.body.data) expect(row.chapter).toBeTruthy();
+  });
+
+  it('still refuses a national admin a request that names no chapter target', async () => {
+    // updateSubmission on a chapterless (national contact form) submission.
+    // Bypassing WHICH chapter is not bypassing WHETHER there is one.
+    const national = await makeChapterAdmin(strapi, {
+      email: `national-null-${RUN}@areaa.test`, chapterIds: [],
+      capabilities: ['national_admin'],
+    });
+    const submission = await strapi.documents('api::form-submission.form-submission')
+      .create({ data: { name: `Null Chapter ${RUN}`, email: 'x@example.com' } });
+
+    const res = await request(strapi.server.httpServer)
+      .put(`/api/chapter-admin/submissions/${submission.documentId}`)
+      .set('Authorization', `Bearer ${await jwtFor(strapi, national.id)}`)
+      .send({ handled: true });
+
+    expect(res.status).toBe(403);
+
+    await strapi.documents('api::form-submission.form-submission')
+      .delete({ documentId: submission.documentId });
   });
 });

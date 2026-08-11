@@ -5,8 +5,9 @@ const { chapterScopedResource } = require('../services/resource-factory');
 // Strapi's loadFiles deletes the require cache per file, so a service-registry
 // lookup can hand back a DIFFERENT class object and `instanceof` silently fails.
 const {
-  ScopeError, resolveAdministeredChapters, assertChapterScope,
+  ScopeError, resolveAuthority, assertChapterScope, assertChapterScopeFor,
 } = require('../services/scope');
+const { assertCapability } = require('../services/capabilities');
 const { SlugError } = require('../services/slug');
 const { BadInputError, pickWhitelisted } = require('../services/fields');
 const {
@@ -67,17 +68,44 @@ const news = chapterScopedResource({
   deriveOnCreate: (ctx) => ({ author: { documentId: ctx.state.user.documentId } }),
 });
 
-/** ScopeError -> 403; client-input errors -> 400; everything else surfaces. */
-const guarded = (handler) => async (ctx) => {
-  try {
-    return await handler(ctx);
-  } catch (err) {
-    if (err instanceof ScopeError) return ctx.forbidden(err.message);
-    if (err instanceof BadInputError || err instanceof SlugError) {
-      return ctx.badRequest(err.message);
-    }
-    throw err;
+// Which capability each exported action requires. Populated by `declare`, read
+// by tests/unit/grants.test.js — so an action exported without going through
+// `declare` fails the suite rather than shipping unguarded.
+const DECLARED = {};
+
+/**
+ * Capability check, then error translation.
+ *
+ * `capability` is REQUIRED and asserted before the handler runs. It cannot be
+ * defaulted: with the fine-grained check living here rather than in the route
+ * table, a handler wrapped without one would be reachable by anyone the coarse
+ * role gate lets through.
+ *
+ * ScopeError -> 403; client-input errors -> 400; everything else surfaces.
+ */
+const guarded = (capability, handler) => {
+  if (!capability) {
+    throw new Error('guarded() needs a capability — see plan 8, Task 11');
   }
+  return async (ctx) => {
+    try {
+      const { capabilities } = await resolveAuthority(ctx);
+      assertCapability(capabilities, capability);
+      return await handler(ctx);
+    } catch (err) {
+      if (err instanceof ScopeError) return ctx.forbidden(err.message);
+      if (err instanceof BadInputError || err instanceof SlugError) {
+        return ctx.badRequest(err.message);
+      }
+      throw err;
+    }
+  };
+};
+
+/** `guarded`, plus recording the declaration for the wiring test. */
+const declare = (name, capability, handler) => {
+  DECLARED[name] = capability;
+  return guarded(capability, handler);
 };
 
 // Query params can arrive as string | string[] (repeated keys); take the first,
@@ -92,7 +120,7 @@ const firstStr = (v) => (Array.isArray(v) ? v[0] : v ?? '').toString().trim();
  * ScopeError -> 403 via `guarded` when the chapter is not administered.
  */
 async function resolveScopedChapter(ctx, rawSlug) {
-  const administered = await resolveAdministeredChapters(ctx);
+  const { capabilities, chapters } = await resolveAuthority(ctx);
   const chapterSlug = firstStr(rawSlug);
   if (!chapterSlug) return { error: 'chapterSlug is required' };
 
@@ -101,7 +129,11 @@ async function resolveScopedChapter(ctx, rawSlug) {
   });
   if (!chapter) return { error: 'No such chapter', notFound: true };
 
-  assertChapterScope(administered, chapter.documentId);
+  // National Admin is unscoped by decision. The missing-target case above still
+  // rejects everyone, national included.
+  assertChapterScope(chapters, chapter.documentId, {
+    unscoped: capabilities.has('national_admin'),
+  });
   return { chapter };
 }
 
@@ -117,15 +149,21 @@ async function ctaIn(strapiInstance, parentType, parentId, slot) {
 }
 
 module.exports = {
-  getEvent: guarded(events.getOne),
-  listEvents: guarded(events.list),
-  createEvent: guarded(events.create),
-  updateEvent: guarded(events.update),
-  deleteEvent: guarded(events.delete),
+  getEvent: declare('getEvent', 'chapter_admin', events.getOne),
+  listEvents: declare('listEvents', 'chapter_admin', events.list),
+  createEvent: declare('createEvent', 'chapter_admin', events.create),
+  updateEvent: declare('updateEvent', 'chapter_admin', events.update),
+  deleteEvent: declare('deleteEvent', 'chapter_admin', events.delete),
 
-  // Role-gated only: an upload has no owning chapter until a record references
-  // it, so there is nothing to scope-check here.
-  async uploadMedia(ctx) {
+  // Capability-gated but NOT scope-checked: an upload has no owning chapter
+  // until a record references it, so there is no target to scope against. The
+  // record that references it IS scope-checked, on write.
+  //
+  // This was a bare handler before plan 8 — the only export that never went
+  // through `guarded` — on the assumption that the role gate was the whole
+  // check. It no longer is, which is why grants.test.js now diffs the declared
+  // map against the exports rather than trusting anyone to remember.
+  uploadMedia: declare('uploadMedia', 'chapter_admin', async (ctx) => {
     const file = ctx.request.files?.files;
     if (!file || Array.isArray(file)) {
       return ctx.badRequest('Attach exactly one file under the field name "files"');
@@ -137,24 +175,24 @@ module.exports = {
       if (err.name === 'UploadValidationError') return ctx.badRequest(err.message);
       throw err;
     }
-  },
+  }),
 
-  getCommittee: guarded(committees.getOne),
-  listCommittees: guarded(committees.list),
-  createCommittee: guarded(committees.create),
-  updateCommittee: guarded(committees.update),
-  deleteCommittee: guarded(committees.delete),
+  getCommittee: declare('getCommittee', 'chapter_admin', committees.getOne),
+  listCommittees: declare('listCommittees', 'chapter_admin', committees.list),
+  createCommittee: declare('createCommittee', 'chapter_admin', committees.create),
+  updateCommittee: declare('updateCommittee', 'chapter_admin', committees.update),
+  deleteCommittee: declare('deleteCommittee', 'chapter_admin', committees.delete),
 
-  getNewsItem: guarded(news.getOne),
-  listNews: guarded(news.list),
-  createNews: guarded(news.create),
-  updateNews: guarded(news.update),
-  deleteNews: guarded(news.delete),
+  getNewsItem: declare('getNewsItem', 'chapter_admin', news.getOne),
+  listNews: declare('listNews', 'chapter_admin', news.list),
+  createNews: declare('createNews', 'chapter_admin', news.create),
+  updateNews: declare('updateNews', 'chapter_admin', news.update),
+  deleteNews: declare('deleteNews', 'chapter_admin', news.delete),
 
   // --- members -----------------------------------------------------------
   // Read-only. Feeds the committee picker; plan 4 reuses it for the
   // member-group slots. Hand-built rows — see services/members.js.
-  listMembers: guarded(async (ctx) => {
+  listMembers: declare('listMembers', 'chapter_admin', async (ctx) => {
     const { chapter, error, notFound } = await resolveScopedChapter(ctx, ctx.query.chapterSlug);
     if (error) return notFound ? ctx.notFound(error) : ctx.badRequest(error);
 
@@ -175,7 +213,7 @@ module.exports = {
   }),
 
   // --- chapter settings --------------------------------------------------
-  getChapter: guarded(async (ctx) => {
+  getChapter: declare('getChapter', 'chapter_admin', async (ctx) => {
     const { chapter, error, notFound } = await resolveScopedChapter(ctx, ctx.query.chapterSlug);
     if (error) return notFound ? ctx.notFound(error) : ctx.badRequest(error);
 
@@ -185,7 +223,7 @@ module.exports = {
       slug: chapter.slug, email: chapter.email ?? '' } };
   }),
 
-  updateChapter: guarded(async (ctx) => {
+  updateChapter: declare('updateChapter', 'chapter_admin', async (ctx) => {
     const input = ctx.request.body?.data ?? ctx.request.body ?? {};
     const { chapter, error, notFound } = await resolveScopedChapter(ctx, input.chapterSlug);
     if (error) return notFound ? ctx.notFound(error) : ctx.badRequest(error);
@@ -208,7 +246,7 @@ module.exports = {
 
   // --- submissions -------------------------------------------------------
   // form-submission is draftAndPublish:FALSE, so no status flag anywhere here.
-  listSubmissions: guarded(async (ctx) => {
+  listSubmissions: declare('listSubmissions', 'chapter_admin', async (ctx) => {
     const { chapter, error, notFound } = await resolveScopedChapter(ctx, ctx.query.chapterSlug);
     if (error) return notFound ? ctx.notFound(error) : ctx.badRequest(error);
 
@@ -221,15 +259,17 @@ module.exports = {
     ctx.body = { data: rows };
   }),
 
-  updateSubmission: guarded(async (ctx) => {
-    const administered = await resolveAdministeredChapters(ctx);
+  updateSubmission: declare('updateSubmission', 'chapter_admin', async (ctx) => {
     const { documentId } = ctx.params;
 
     const record = await strapi.documents('api::form-submission.form-submission').findOne({
       documentId, populate: { chapter: { fields: ['slug'] } },
     });
     if (!record) return ctx.notFound();
-    assertChapterScope(administered, record.chapter?.documentId ?? null);
+    // `?? null` is load-bearing: a submission from the NATIONAL contact form has
+    // no chapter, and a missing target throws for everyone — national admins
+    // included. Those live in the Strapi admin panel, not here.
+    await assertChapterScopeFor(ctx, record.chapter?.documentId ?? null);
 
     const input = ctx.request.body?.data ?? ctx.request.body ?? {};
     ctx.body = { data: await strapi.documents('api::form-submission.form-submission').update({
@@ -243,7 +283,7 @@ module.exports = {
   // and writes the chapter home page's partner-group component relation —
   // which is what the public microsite actually renders. `chapter.partners`
   // exists but has no reader; see the plan's revision note.
-  listPartners: guarded(async (ctx) => {
+  listPartners: declare('listPartners', 'chapter_admin', async (ctx) => {
     // Scope-checked even though the catalogue is global: the screen belongs to
     // a chapter, and answering for one the caller cannot administer would leak
     // which chapters exist.
@@ -277,7 +317,7 @@ module.exports = {
     };
   }),
 
-  updatePartners: guarded(async (ctx) => {
+  updatePartners: declare('updatePartners', 'chapter_admin', async (ctx) => {
     const input = ctx.request.body?.data ?? ctx.request.body ?? {};
     const { chapter, error, notFound } = await resolveScopedChapter(ctx, input.chapterSlug);
     if (error) return notFound ? ctx.notFound(error) : ctx.badRequest(error);
@@ -332,7 +372,7 @@ module.exports = {
   // array would rewrite every component including ones this screen never
   // rendered. Each save updates one component ROW by id, exactly as the
   // partner-group write does.
-  getPage: guarded(async (ctx) => {
+  getPage: declare('getPage', 'chapter_admin', async (ctx) => {
     const { chapter, error, notFound } = await resolveScopedChapter(ctx, ctx.query.chapterSlug);
     if (error) return notFound ? ctx.notFound(error) : ctx.badRequest(error);
 
@@ -391,7 +431,7 @@ module.exports = {
     };
   }),
 
-  updatePage: guarded(async (ctx) => {
+  updatePage: declare('updatePage', 'chapter_admin', async (ctx) => {
     const input = ctx.request.body?.data ?? ctx.request.body ?? {};
     const { chapter, error, notFound } = await resolveScopedChapter(ctx, input.chapterSlug);
     if (error) return notFound ? ctx.notFound(error) : ctx.badRequest(error);
@@ -650,4 +690,8 @@ module.exports = {
       },
     };
   }),
+
+  // Metadata, not an action. tests/unit/grants.test.js diffs this against the
+  // exported handlers, so a handler added without `declare` fails the suite.
+  __capabilities: DECLARED,
 };
