@@ -258,7 +258,6 @@ async function main() {
         president: president ? president.id : undefined,
         administrators: chapterMembers.map((m) => m.id),
         members: chapterMembers.map((m) => m.id),
-        partners: a.partners.map((i) => partners[i].documentId),
       },
       ...pub,
     });

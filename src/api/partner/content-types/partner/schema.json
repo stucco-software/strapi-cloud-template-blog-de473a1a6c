@@ -28,12 +28,6 @@
     "sponsorshipLevel": {
       "type": "enumeration",
       "enum": ["Platinum", "Gold", "Silver", "Bronze"]
-    },
-    "chapters": {
-      "type": "relation",
-      "relation": "manyToMany",
-      "target": "api::chapter.chapter",
-      "mappedBy": "partners"
     }
   }
 }
