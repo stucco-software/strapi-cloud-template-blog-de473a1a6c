@@ -258,3 +258,42 @@ describe('fail closed', () => {
       .delete({ documentId: submission.documentId });
   });
 });
+
+describe('GET /api/users/me', () => {
+  it('exposes the caller’s capabilities', async () => {
+    const [chapter] = await draftChapters(strapi, 1);
+    const user = await makeChapterAdmin(strapi, {
+      email: `mecaps-${RUN}@areaa.test`, chapterIds: [chapter.id],
+      capabilities: ['chapter_admin', 'national_admin'],
+    });
+
+    const res = await request(strapi.server.httpServer)
+      .get('/api/users/me')
+      .set('Authorization', `Bearer ${await jwtFor(strapi, user.id)}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.capabilities.map((c) => c.slug).sort())
+      .toEqual(['chapter_admin', 'national_admin']);
+    expect(res.body.capabilities.every((c) => typeof c.name === 'string')).toBe(true);
+    // categories is the authority model; no client needs it and shipping it
+    // would invite the frontend to re-derive authorization decisions.
+    expect(res.body.capabilities.every((c) => !('categories' in c))).toBe(true);
+
+    // Unchanged: the existing shape must survive.
+    expect(res.body.role.type).toBe('chapter_admin');
+    expect(Array.isArray(res.body.administeredChapters)).toBe(true);
+  });
+
+  it('returns an empty array, never undefined, for a plain member', async () => {
+    const member = await strapi.query('plugin::users-permissions.user')
+      .findOne({ where: { email: 'plainmember@areaa.test' } });
+    expect(member).toBeTruthy();
+
+    const res = await request(strapi.server.httpServer)
+      .get('/api/users/me')
+      .set('Authorization', `Bearer ${await jwtFor(strapi, member.id)}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.capabilities).toEqual([]);
+  });
+});

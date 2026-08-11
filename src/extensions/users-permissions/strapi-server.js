@@ -111,6 +111,7 @@ module.exports = (plugin) => {
           // they are re-attached below, same as `chapter`.
           role: { fields: ['name', 'type'] },
           administeredChapters: { fields: ['name', 'slug'] },
+          capabilities: { fields: ['slug', 'name'] },
         },
       });
 
@@ -126,6 +127,18 @@ module.exports = (plugin) => {
     body.administeredChapters = (user?.administeredChapters ?? []).map((c) => ({
       name: c.name,
       slug: c.slug,
+    }));
+
+    // Same technique again: the sanitizer drops this because the Authenticated
+    // role has no read-grant on the capability type. Always an array, never
+    // undefined, so callers need no guard.
+    //
+    // Slug + name only. `categories` is the authority model, and shipping it
+    // would invite the frontend to re-derive authorization decisions the server
+    // has already made — the split that produced the missing-role bug.
+    body.capabilities = (user?.capabilities ?? []).map((c) => ({
+      slug: c.slug,
+      name: c.name,
     }));
 
     for (const field of SELF_VISIBLE_PRIVATE_FIELDS) {
