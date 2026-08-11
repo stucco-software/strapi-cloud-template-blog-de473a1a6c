@@ -110,6 +110,12 @@
       "target": "api::chapter.chapter",
       "mappedBy": "administrators"
     },
+    "capabilities": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::member-capability.member-capability",
+      "inversedBy": "holders"
+    },
     "memberSince": {
       "type": "date",
       "private": true
