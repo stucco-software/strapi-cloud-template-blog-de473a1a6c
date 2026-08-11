@@ -1,0 +1,37 @@
+{
+  "kind": "collectionType",
+  "collectionName": "member_capabilities",
+  "info": {
+    "singularName": "member-capability",
+    "pluralName": "member-capabilities",
+    "displayName": "Member Capability",
+    "description": "A unit of authority a member may hold. Additive: a user may hold any number, and their grants are the union. Scope is held separately, on the user."
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "slug": {
+      "type": "uid",
+      "targetField": "name",
+      "required": true
+    },
+    "name": {
+      "type": "string",
+      "required": true
+    },
+    "description": {
+      "type": "text"
+    },
+    "categories": {
+      "type": "json"
+    },
+    "holders": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "plugin::users-permissions.user",
+      "mappedBy": "capabilities"
+    }
+  }
+}
