@@ -63,3 +63,79 @@ describe('grantsFor', () => {
     expect(new Set(CHAPTER_ADMIN_GRANTS).size).toBe(30);
   });
 });
+
+const {
+  assertCapability, heldWithImplied, IMPLIES, CAPABILITY_SLUGS,
+} = require('../../src/api/chapter-admin/services/capabilities.js');
+const { ScopeError } = require('../../src/api/chapter-admin/services/scope.js');
+
+describe('assertCapability', () => {
+  it('allows a capability held directly', () => {
+    expect(assertCapability(['chapter_admin'], 'chapter_admin')).toBe(true);
+  });
+
+  it('accepts a Set, which is what resolveAuthority returns', () => {
+    expect(assertCapability(new Set(['chapter_admin']), 'chapter_admin')).toBe(true);
+  });
+
+  it('rejects one not held', () => {
+    expect(() => assertCapability(['committee_leader'], 'chapter_admin'))
+      .toThrow(ScopeError);
+  });
+
+  it('rejects when nothing is held', () => {
+    expect(() => assertCapability([], 'chapter_admin')).toThrow(ScopeError);
+    expect(() => assertCapability(undefined, 'chapter_admin')).toThrow(ScopeError);
+  });
+
+  it('fails closed when the route declares no capability', () => {
+    // A handler wired without a declared capability must be unreachable, not
+    // wide open. This is the failure mode the whole design has to survive.
+    for (const bad of [null, undefined, '']) {
+      expect(() => assertCapability(['chapter_admin'], bad)).toThrow(ScopeError);
+    }
+  });
+
+  it('does not treat a substring as a hit', () => {
+    expect(() => assertCapability(['chapter_admin_x'], 'chapter_admin'))
+      .toThrow(ScopeError);
+  });
+
+  it('lets national_admin stand in for chapter_admin, by declaration', () => {
+    expect(assertCapability(['national_admin'], 'chapter_admin')).toBe(true);
+    expect(IMPLIES.national_admin).toContain('chapter_admin');
+  });
+
+  it('does not imply in the other direction', () => {
+    expect(() => assertCapability(['chapter_admin'], 'national_admin'))
+      .toThrow(ScopeError);
+  });
+
+  it('every implied slug is a real capability', () => {
+    for (const implied of Object.values(IMPLIES).flat()) {
+      expect(CAPABILITY_SLUGS).toContain(implied);
+    }
+  });
+
+  it('lists the same slugs the seed creates', () => {
+    const { CAPABILITIES } = require('../../src/api/member-capability/seed.js');
+    expect([...CAPABILITY_SLUGS].sort())
+      .toEqual(CAPABILITIES.map((c) => c.slug).sort());
+  });
+});
+
+describe('heldWithImplied', () => {
+  it('expands one held capability into everything it implies', () => {
+    expect([...heldWithImplied(['national_admin'])].sort())
+      .toEqual(['chapter_admin', 'national_admin']);
+  });
+
+  it('is a no-op for a capability that implies nothing', () => {
+    expect([...heldWithImplied(['committee_leader'])]).toEqual(['committee_leader']);
+  });
+
+  it('is empty for nothing held', () => {
+    expect([...heldWithImplied([])]).toEqual([]);
+    expect([...heldWithImplied(undefined)]).toEqual([]);
+  });
+});
