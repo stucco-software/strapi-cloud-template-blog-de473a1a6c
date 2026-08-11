@@ -70,10 +70,14 @@ The rich-text findings are not lost — see *Deferred: rich text* at the end, wh
 
 | | Tests | Files |
 |---|---|---|
-| `areaa-cms` | **235** | 17 |
-| `areaa-frontend` | **90** | 12 |
+| `areaa-cms` | **277** | 20 |
+| `areaa-frontend` | **115** | 16 |
 
-`api::chapter-admin%` permissions: **25**. This plan adds **no routes and no grants** — `GET`/`PUT /chapter-admin/page` learn new fields.
+`api::chapter-admin%` permissions: **25**. Public-role permissions: **29**.
+
+*(Re-measured after plan 7 landed. The figures below were originally computed
+against 235/90 and have been restated; plan 6 adds 42 CMS and 41 frontend tests
+whichever order the two run in.)* This plan adds **no routes and no grants** — `GET`/`PUT /chapter-admin/page` learn new fields.
 
 **3. Plan 5 is a hard prerequisite.** This extends its `page-content.js`, its handlers and its screen. Plan 7 is independent.
 
@@ -1230,7 +1234,7 @@ cd /Users/nk/Projects/AREAA/areaa-cms && pkill -f "strapi develop" ; \
 cd /Users/nk/Projects/AREAA/areaa-cms && PATH="/opt/homebrew/bin:$PATH" npm test
 ```
 
-Expected: **33 tests** in that file (18 + 15 — 8 buttons, 7 image), then **277 overall** (235 + 14 safe-url + 13 page-content + 15 integration).
+Expected: **33 tests** in that file (18 + 15 — 8 buttons, 7 image), then **319 overall** (277 + 14 safe-url + 13 page-content + 15 integration).
 
 - [ ] **Step 3: Prove the copy, the buttons AND the image came back**
 
@@ -1793,7 +1797,7 @@ cd /Users/nk/Projects/AREAA/areaa-frontend && npm run check
 cd /Users/nk/Projects/AREAA/areaa-frontend && npm test
 ```
 
-Expected: 0 errors, then **111 passed** (90 + 4 client + 6 payload + 11 render). Task 7 takes it to **131**.
+Expected: 0 errors, then **136 passed** (115 + 4 client + 6 payload + 11 render). Task 7 takes it to **156**.
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-frontend && git add -A src/ tests/ && \
@@ -1990,7 +1994,7 @@ cd /Users/nk/Projects/AREAA/areaa-frontend && npm test
 cd /Users/nk/Projects/AREAA/areaa-frontend && npm run check
 ```
 
-Expected: **277 CMS**, **131 frontend**, 0 typecheck errors, `pages_cmps`
+Expected: **319 CMS**, **156 frontend**, 0 typecheck errors, `pages_cmps`
 byte-identical across two CMS runs, and the extended copy snapshot unchanged.
 
 ### Task 9: Prove it in a browser
@@ -2056,7 +2060,7 @@ disk. Verified against the seed: file 1 carries two.
 
 ## Done when
 
-- **277 CMS and 131 frontend tests green**, CMS twice, `pages_cmps` byte-identical.
+- **319 CMS and 156 frontend tests green**, CMS twice, `pages_cmps` byte-identical.
 - A chapter admin changes a button's text and link, **with JavaScript disabled**, and the public microsite shows it.
 - A chapter admin replaces the hero placeholder with a real image, and the microsite shows it.
 - The **button** is written at draft and published under plan 5's content-parity gate. The **image** is written at both unconditionally — media rows are not draft/published, so there is nothing to diverge (Task 4 Step 3 says so; this criterion used to contradict it).
