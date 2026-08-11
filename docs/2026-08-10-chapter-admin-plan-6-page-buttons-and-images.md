@@ -411,6 +411,14 @@ describe('ctaSlotsFor', () => {
     expect(ctaSlotsFor('shared.section')).toEqual(['primaryCta', 'secondaryCta']);
     expect(ctaSlotsFor('shared.upcoming-events')).toEqual(['link']);
     expect(ctaSlotsFor('shared.member-group')).toEqual(['link']);
+    expect(ctaSlotsFor('shared.news-and-resources')).toEqual(['link']);
+  });
+
+  it('does NOT offer a slot for partner-callout, which has no renderer', () => {
+    // Its schema has a `link`, but PageBody never dispatches it and
+    // toPartnershipProps never forwards a cta — the button would be editable
+    // and invisible.
+    expect(ctaSlotsFor('shared.partner-callout')).toEqual([]);
   });
 
   it('returns none for a component with no CTA', () => {
@@ -491,10 +499,13 @@ const MAX_LABEL_LEN = 200;
 const CTA_SLOTS = {
   'shared.hero': ['primaryCta', 'secondaryCta'],
   'shared.section': ['primaryCta', 'secondaryCta'],
-  'shared.partner-callout': ['link'],
   'shared.upcoming-events': ['link'],
   'shared.member-group': ['link'],
   'shared.news-and-resources': ['link'],
+  // NO 'shared.partner-callout'. It has a `link` in its schema and NO RENDERER:
+  // PageBody dispatches partner-GROUP to Partnership.astro and lets
+  // partner-callout fall through to null. Zero rows exist in any zone. An
+  // editable button on a component that never appears is a screen that lies.
 };
 
 const ctaSlotsFor = (type) => CTA_SLOTS[type] ?? [];
@@ -534,7 +545,7 @@ cd /Users/nk/Projects/AREAA/areaa-cms && PATH="/opt/homebrew/bin:$PATH" \
   npx vitest run tests/unit/page-content.test.js
 ```
 
-Expected: **54 tests** (42 + 12) — 3 `ctaSlotsFor`, 8 `shapeCtaEdit`, 1 table-parity.
+Expected: **55 tests** (42 + 13) — 4 `ctaSlotsFor`, 8 `shapeCtaEdit`, 1 table-parity.
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-cms && \
@@ -569,7 +580,6 @@ draft parent's slots, and pair each to the published parent's same slot:
 const CMPS_TABLE = {
   'shared.hero': 'components_shared_heroes_cmps',
   'shared.section': 'components_shared_sections_cmps',
-  'shared.partner-callout': 'components_shared_partner_callouts_cmps',
   'shared.upcoming-events': 'components_shared_upcoming_events_cmps',
   'shared.member-group': 'components_shared_member_groups_cmps',
   'shared.news-and-resources': 'components_shared_news_and_resources_cmps',
@@ -727,16 +737,45 @@ Report the facets and let the screen tell the truth:
     };
 ```
 
-The screen reads `live` and `held` rather than `wrote`:
+**This changes the response shape, and the client reads the old one.** Task 6
+must carry `live` and `held` across the repo boundary or the feature works while
+the screen reports the opposite. Traced end to end against a stubbed body: with
+`savePageSection` still doing `wrote: body?.data?.wrote ?? 0`, `wrote` is
+**always 0**, plan 5's route branches `if (result.wrote < 2)` — always true — and
+**every save, including a completely successful one, reports "Saved to your
+draft. Your live page hasn't changed yet."** All 121 tests stay green.
 
-| `live` | `held` | Message |
+Six hops, all of which Task 6 must specify:
+
+1. `savePageSection`'s return type gains `live: number; held: number` and stops
+   reading `data.wrote`.
+2. Its body read becomes `live: body?.data?.live ?? 0, held: body?.data?.held ?? 0`.
+3. `src/pages/api/chapter-admin/page.ts` branches three ways instead of two.
+4. `page.astro`'s `flashes` map gains a third key.
+5. A `PageSaveResult` type is declared and exported.
+6. **A unit test for `savePageSection` that stubs the new body** — there is no
+   client test in the suite today, which is exactly why this hop was silent.
+
+```ts
+// src/pages/api/chapter-admin/page.ts
+    if (result.held === 0) return back(base, "saved=1");
+    if (result.live === 0) return back(base, `saved=draft&why=${result.skipReason ?? "unknown"}`);
+    return back(base, "saved=partial");
+```
+
+```ts
+// page.astro
+    "partial": "Saved. Part of this section is live now; the rest is waiting for AREAA national to publish.",
+```
+
+| `live` | `held` | Flash |
 |---|---|---|
 | >0 | 0 | "Section saved." |
 | 0 | >0 | "Saved to your draft." + the `skipReason` explanation |
-| >0 | >0 | **"Saved. Part of this section is live now; the rest is waiting for AREAA national to publish."** |
+| >0 | >0 | "Saved. Part of this section is live now; the rest is waiting…" |
 
-That third row is the case the first draft got wrong, and it is not rare — it is
-what aloha's Header does today.
+The third row is what aloha's Header does **today** — its text is diverged, its
+buttons are not — so it is the common case, not an edge.
 
 - [ ] **Step 3: Verify the wiring**
 
@@ -1191,7 +1230,7 @@ cd /Users/nk/Projects/AREAA/areaa-cms && pkill -f "strapi develop" ; \
 cd /Users/nk/Projects/AREAA/areaa-cms && PATH="/opt/homebrew/bin:$PATH" npm test
 ```
 
-Expected: **33 tests** in that file (18 + 15 — 8 buttons, 7 image), then **276 overall** (235 + 14 safe-url + 12 page-content + 15 integration).
+Expected: **33 tests** in that file (18 + 15 — 8 buttons, 7 image), then **277 overall** (235 + 14 safe-url + 13 page-content + 15 integration).
 
 - [ ] **Step 3: Prove the copy, the buttons AND the image came back**
 
@@ -1238,13 +1277,25 @@ Carry the reason through, exactly as plan 5 carries `skipReason`:
 
 ```ts
 // src/lib/chapter-admin/page.ts
+// `SkipReason` is plan 5's, already exported from this file.
+export interface PageSaveResult {
+    ok: boolean;
+    status: number;
+    /** Facets that reached the published row. */
+    live: number;
+    /** Facets held back by the parity gate. */
+    held: number;
+    skipReason: SkipReason;
+    message: string;
+}
+
 export async function savePageSection(
     jwt: string,
     chapterSlug: string,
     index: number,
     values: Record<string, unknown>,
     extra: { ctas?: Record<string, { label: string; href: string }>; figureId?: number } = {}
-): Promise<{ ok: boolean; status: number; wrote: number; skipReason: SkipReason; message: string }> {
+): Promise<PageSaveResult> {
     const { status, body } = await call(jwt, "/page", {
         method: "PUT",
         // NOTE the shape: values are spread at TOP LEVEL, beside chapterSlug and
@@ -1255,7 +1306,12 @@ export async function savePageSection(
     return {
         ok: status === 200 && Boolean(body?.data),
         status,
-        wrote: body?.data?.wrote ?? 0,
+        // `live` and `held` COUNT FACETS, not statuses. One save writes text,
+        // each button and the image under three different gates, so a single
+        // number cannot describe it — and reading the `wrote` this endpoint no
+        // longer sends yields 0, which makes every save look like a failure.
+        live: body?.data?.live ?? 0,
+        held: body?.data?.held ?? 0,
         skipReason: body?.meta?.skipReason ?? null,
         message: body?.error?.message ?? "",
     };
@@ -1283,9 +1339,19 @@ than an XSS, but plan 5's `why` was looked up in a fixed map and this one is
 not; and (b) every reachable 400 message is now admin-facing copy. Audit them
 before shipping: `chapterSlug is required`, `title is too long`,
 `Nothing editable was submitted` and `body is too long` all read as developer
-strings. Either rewrite those messages in `page-content.js`, or map a small set
-of known reasons on the screen and fall back for the rest — the latter keeps
-the reflection surface closed and is the smaller change.
+strings. **Map a small set of known reasons on the screen and fall back for the rest.**
+That keeps the reflection surface closed and is the smaller change; leaving the
+choice open means a worker copies the reflecting variant and skips the audit.
+
+```ts
+const SERVER_REASONS: Record<string, string> = {
+    "That link is not a valid web address": "That link is not a valid web address.",
+    "Button text is required": "Every button needs text.",
+    "No such button on this section": "That button is no longer on this section. Reload the page.",
+    "This section has no image": "That section doesn't have an image.",
+};
+// … invalid: SERVER_REASONS[why ?? ""] ?? "Please check that section and try again.",
+```
 
 `error=stale` becomes unreachable once 400s carry `invalid`; delete it from
 `errorMessages` rather than leaving dead copy.
@@ -1312,6 +1378,53 @@ export interface PageSection {
 
 `savePageSection` gains `ctas?: Record<string, {label: string; href: string}>` and
 `figureId?: number`.
+
+- [ ] **Step 1c: A client test, because this hop has never had one**
+
+`tests/unit/page-client.test.ts`. The facet boundary broke silently precisely
+because nothing exercised `savePageSection`:
+
+```ts
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { savePageSection } from "../../src/lib/chapter-admin/page";
+
+const respond = (body: unknown, status = 200) => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+        JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } })));
+};
+afterEach(() => vi.unstubAllGlobals());
+
+describe("savePageSection", () => {
+    it("reads live and held from the facet response", async () => {
+        respond({ data: { facets: [], live: 2, held: 1 }, meta: { skipReason: "content-diverged" } });
+        const r = await savePageSection("j", "boston", 0, {});
+        expect(r.live).toBe(2);
+        expect(r.held).toBe(1);
+        expect(r.skipReason).toBe("content-diverged");
+    });
+
+    it("reports nothing held when the save was clean", async () => {
+        respond({ data: { facets: [], live: 3, held: 0 }, meta: { skipReason: null } });
+        const r = await savePageSection("j", "boston", 0, {});
+        expect(r.held).toBe(0);
+        expect(r.ok).toBe(true);
+    });
+
+    it("carries the server's message on a 400", async () => {
+        respond({ error: { message: "That link is not a valid web address" } }, 400);
+        const r = await savePageSection("j", "boston", 0, {});
+        expect(r.ok).toBe(false);
+        expect(r.message).toBe("That link is not a valid web address");
+    });
+
+    it("does not invent facets when the server sends none", async () => {
+        respond({ data: {} });
+        const r = await savePageSection("j", "boston", 0, {});
+        expect(r.live).toBe(0);
+        expect(r.held).toBe(0);
+    });
+});
+```
 
 - [ ] **Step 2: Write the failing payload test**
 
@@ -1387,15 +1500,33 @@ tolerance (Task 3 Step 2) are what make the capability real rather than
 asserted, and the first type without editable text would otherwise fail with
 `Nothing editable was submitted` shown verbatim to the admin.
 
-Change `canEdit` to `section.editable.length > 0 || (section.ctas ?? []).length > 0 || section.image`
-in the same step, or the relaxation below is dead code:
+Change `canEdit` in the same step, **and gate the read-only note on it** — a
+section with a CTA but no editable text otherwise renders "There's nothing to
+edit on this section." directly above a working Save button. Measured:
+`HAS NOTE: true  HAS FORM: true  HAS SAVE: true`.
+
+```diff
+-const canEdit = section.editable.length > 0;
++const canEdit = section.editable.length > 0 || ctas.length > 0 || Boolean(image);
+```
+
+```diff
+-    {section.readOnlyReason === "not-editable" && (
++    {section.readOnlyReason === "not-editable" && !canEdit && (
+```
+
+Not reachable today — every CTA-bearing and media-bearing type has `title` in
+`EDITABLE_BY_TYPE` — so this is future-proofing whose only observable effect
+today would be that contradiction. Both halves or neither.
 
 ```diff
 -    if (editable.length === 0) return null;
      …
 -    if (Object.keys(values).length === 0) return null;
-+    // Null only when there is NOTHING to save — no text, no buttons, no image.
-+    if (Object.keys(values).length === 0 && !ctas && figureId === undefined) return null;
++    // Null only when there is nothing to save. `figureId` is NOT checked here:
++    // the route uploads the file and passes the id straight to
++    // savePageSection, so it never reaches this function.
++    if (Object.keys(values).length === 0 && !ctas) return null;
 ```
 
 `ctas` is omitted entirely rather than sent as `{}` when the form declared no
@@ -1425,8 +1556,10 @@ const image = section.image ?? null;
                 Text Section — would otherwise be headed "Second button" with no
                 first button anywhere. */}
             <legend>{ctas.length > 1 ? `Button ${i + 1}` : "Button"}</legend>
-            <FormField label="Button text" name={`cta.${cta.slot}.label`} value={cta.label} required />
+            <FormField label="Button text" name={`cta.${cta.slot}.label`} value={cta.label}
+                idSuffix={String(section.index)} required />
             <FormField label="Button links to" name={`cta.${cta.slot}.href`} value={cta.href}
+                idSuffix={String(section.index)} required
                 helper="A page on this site, like /events, or a full web address." />
         </fieldset>
     ))}
@@ -1455,7 +1588,28 @@ open the **Header's** file picker. Plan 5 already duplicates `field-title` acros
 eleven cards, but a label *is* the affordance for a file input, and this is the
 first case where mis-targeting changes which section gets edited.
 
-Give `FormField` an optional `idSuffix` and pass `section.index`:
+**Every field on this card needs it, not just the file input.** `CTA_SLOTS`
+gives hero *and* section `primaryCta`, so `id="field-cta.primaryCta.label"`
+collides across the two exactly as `field-figure` does — clicking the Text
+Section's "Button text" label focuses the Header's input. Measured; the plan's
+own argument for the file input applies verbatim and was not applied.
+
+`FormField.astro` gains the prop and uses it:
+
+```diff
+ interface Props {
+     label: string;
+     name: string;
++    /** Disambiguates ids when the same field name appears on one page. */
++    idSuffix?: string;
+```
+
+```diff
+-const id = `field-${name}`;
++const id = idSuffix ? `field-${name}-${idSuffix}` : `field-${name}`;
+```
+
+Then pass `section.index` to all three:
 
 ```astro
     <FormField label="Replace image" name="figure" type="file" idSuffix={String(section.index)}
@@ -1586,6 +1740,31 @@ describe("PageSectionForm — buttons and image", () => {
         expect(href).toContain("required");
     });
 
+    it("gives every field an id unique to its section", async () => {
+        // Promised by Step 4 and never written; both idSuffix mutations
+        // survived because of it. `CTA_SLOTS` and `MEDIA_SLOTS` each cover
+        // hero AND section, so without this two cards share `field-figure`
+        // and `field-cta.primaryCta.label`, and a label focuses the wrong card.
+        const a = await render({ section: section({ index: 0,
+            ctas: [{ slot: "primaryCta", label: "A", href: "/a" }],
+            image: { slot: "figure", url: "/uploads/x.png" } }) });
+        const b = await render({ section: section({ index: 2,
+            ctas: [{ slot: "primaryCta", label: "B", href: "/b" }],
+            image: { slot: "figure", url: "/uploads/y.png" } }) });
+        const ids = (h: string) => [...h.matchAll(/id="(field-[^"]+)"/g)].map((m) => m[1]);
+        expect(ids(a).length).toBeGreaterThan(2);
+        expect(ids(a).some((i) => ids(b).includes(i))).toBe(false);
+    });
+
+    it("does not say 'nothing to edit' above a working Save button", async () => {
+        // The canEdit relaxation's only observable effect if half-applied.
+        const html = await render({ section: section({
+            editable: [], readOnlyReason: "not-editable",
+            ctas: [{ slot: "primaryCta", label: "A", href: "/a" }] }) });
+        expect(html).toContain("Save Section");
+        expect(html).not.toContain("nothing to edit");
+    });
+
     it("names a lone secondary button plainly, not 'Second button'", async () => {
         // aloha's Text Section carries its ONLY cta in the secondaryCta slot,
         // so a naive `slot === 'secondaryCta' ? 'Second button'` heads that
@@ -1614,7 +1793,7 @@ cd /Users/nk/Projects/AREAA/areaa-frontend && npm run check
 cd /Users/nk/Projects/AREAA/areaa-frontend && npm test
 ```
 
-Expected: 0 errors, then **105 passed** (90 + 6 payload + 9 render). Task 7 takes it to **121**.
+Expected: 0 errors, then **111 passed** (90 + 4 client + 6 payload + 11 render). Task 7 takes it to **131**.
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-frontend && git add -A src/ tests/ && \
@@ -1632,18 +1811,27 @@ cd /Users/nk/Projects/AREAA/areaa-frontend && git add -A src/ tests/ && \
 as well as the two `primaryCta`/`secondaryCta` types — and all four render a
 bare `<a href={cta.href}>`:
 
-| Component | Renderer | Line |
-|---|---|---|
-| hero | `Hero.astro` | 48, 56 |
-| section | `Section.astro` | 54, 62 |
-| upcoming-events | `Events.astro` | 76 |
-| member-group | `NewMembers.astro` | 67 |
-| news-and-resources | `Spotlight.astro` | 66 |
-| partner-callout | `Partnership.astro` | 40 |
+| Component | Renderer | Line | Reachable by a chapter admin? |
+|---|---|---|---|
+| hero | `Hero.astro` | 48, 56 | ✅ |
+| section | `Section.astro` | 54, 62 | ✅ |
+| upcoming-events | `Events.astro` | 76 | ✅ |
+| member-group | `NewMembers.astro` | 67 | ✅ |
+| news-and-resources | `Spotlight.astro` | 66 | ✅ |
+| partner-callout | *(none)* | — | ❌ **no renderer at all** |
 
-Patching two of six leaves an admin who points the Upcoming Events button at
-`https://evil.example` with exactly the unguarded `window.opener` this task
-exists to close.
+Patching two of five reachable renderers leaves an admin who points the Upcoming
+Events button at `https://evil.example` with exactly the unguarded
+`window.opener` this task exists to close.
+
+**`shared.partner-callout` is a false entry and must come out of `CTA_SLOTS`.**
+`PageBody.astro:46` dispatches `shared.partner-group` → `Partnership.astro`;
+`partner-callout` falls through to `default: return null` and renders nothing.
+`toPartnershipProps` never forwards a `cta` either, so `Partnership`'s anchor is
+permanently its hardcoded `/partners` default. Verified: **zero
+`shared.partner-callout` rows exist in any zone.** Offering an editable button on
+a component that appears on no page is a screen that lies; remove the entry, and
+note it in Known limitations.
 
 Chunk 1 normalises an off-site href to absolute **so the renderer can tell it is
 off-site**. Verified: it cannot. `Hero.astro:46-53` and `Section.astro` render
@@ -1668,37 +1856,55 @@ import Section from "../../src/components/Section.astro";
 import Events from "../../src/components/Events.astro";
 import NewMembers from "../../src/components/NewMembers.astro";
 import Spotlight from "../../src/components/Spotlight.astro";
-import Partnership from "../../src/components/Partnership.astro";
 
 const container = await AstroContainer.create();
 const cta = (href: string) => ({ label: "Go", href });
 
-// One entry per renderer that consumes a chapter-settable CTA. Testing only
-// Hero leaves five untested — verified by mutation: reverting Section.astro
-// entirely, and dropping the secondaryCta spread in Hero, both left the
-// original three-test suite green.
+/**
+ * One entry per renderer a chapter-settable CTA can actually reach.
+ *
+ * THE PROP NAMES ARE NOT GUESSES — they come from each component's own `Props`
+ * interface. An earlier draft passed `{heading, events, link}` to `Events`,
+ * which takes `{heading?, items?, cta?}`; Astro silently ignored the unknown
+ * keys, `cta` fell back to its default `{label:"View All Events", href:"#"}`,
+ * and the test href never reached the anchor. Four of the seven cases were
+ * measured failing, and — worse — their "leaves an in-site button alone" twins
+ * PASSED IDENTICALLY with the fix deleted from all four components. A negative
+ * assertion over a default href tests nothing.
+ *
+ * `Partnership` is deliberately absent. `PageBody` dispatches
+ * `shared.partner-group` to it, not `shared.partner-callout`, and
+ * `toPartnershipProps` never forwards a `cta` — so its anchor is permanently
+ * the hardcoded default and no chapter admin can reach it. See Task 2's note.
+ */
 const CASES: [string, (href: string) => Promise<string>][] = [
     ["Hero primary",   (h) => container.renderToString(Hero, { props: { heading: "H", primaryCta: cta(h), secondaryCta: null } })],
     ["Hero secondary", (h) => container.renderToString(Hero, { props: { heading: "H", primaryCta: null, secondaryCta: cta(h) } })],
     ["Section",        (h) => container.renderToString(Section, { props: { heading: "H", primaryCta: cta(h), secondaryCta: null } })],
-    ["Events",         (h) => container.renderToString(Events, { props: { heading: "E", events: [], link: cta(h) } })],
-    ["NewMembers",     (h) => container.renderToString(NewMembers, { props: { heading: "M", members: [], link: cta(h) } })],
-    ["Spotlight",      (h) => container.renderToString(Spotlight, { props: { heading: "S", link: cta(h) } })],
-    ["Partnership",    (h) => container.renderToString(Partnership, { props: { heading: "P", link: cta(h) } })],
+    ["Events",         (h) => container.renderToString(Events, { props: { heading: "E", items: [], cta: cta(h) } })],
+    ["NewMembers",     (h) => container.renderToString(NewMembers, { props: { heading: "M", items: [], cta: cta(h) } })],
+    ["Spotlight",      (h) => container.renderToString(Spotlight, { props: { heading: "S", items: [], cta: cta(h) } })],
 ];
 
 describe("CTA link safety", () => {
     for (const [name, render] of CASES) {
+        it(`${name}: renders the href it was given`, async () => {
+            // THE ANTI-VACUITY CHECK, and it must come first. Without it a
+            // component that ignores the props still passes both assertions
+            // below, because its default href is in-site.
+            expect(await render("/sentinel-path")).toContain('href="/sentinel-path"');
+        });
+
         it(`${name}: opens an off-site button in a new tab, with a rel guard`, async () => {
             const html = await render("https://evil.example/x");
+            expect(html).toContain('href="https://evil.example/x"');
             expect(html).toContain('rel="noopener noreferrer"');
             expect(html).toContain('target="_blank"');
         });
 
         it(`${name}: leaves an in-site button alone`, async () => {
-            // Same-tab is what an admin means by /events; a rel guard would be
-            // noise, and target="_blank" would be a regression.
             const html = await render("/events");
+            expect(html).toContain('href="/events"');      // reached the anchor
             expect(html).not.toContain("noopener");
             expect(html).not.toContain('target="_blank"');
         });
@@ -1711,10 +1917,10 @@ describe("CTA link safety", () => {
         }
     });
 
-    it("is case-insensitive about the scheme, and ignores protocol-relative", async () => {
-        // `//evil.example` should never reach a renderer — Chunk 1 absolutises
-        // it — but if it did, adding target/rel would be wrong: the browser
-        // treats it as same-scheme, and the regex must not half-match.
+    it("requires the // — a bare scheme is not an absolute url", async () => {
+        // `/^https?:/i` without the slashes matches `https:foo`, a relative
+        // path in some parsers. Mutating the regex that way survived.
+        expect(await CASES[0][1]("/https:not-a-scheme")).not.toContain('target="_blank"');
         expect(await CASES[0][1]("HTTPS://evil.example/x")).toContain('target="_blank"');
         expect(await CASES[0][1]("//evil.example/x")).not.toContain('target="_blank"');
     });
@@ -1755,13 +1961,21 @@ cd /Users/nk/Projects/AREAA/areaa-frontend && npx vitest run tests/unit/cta-link
 cd /Users/nk/Projects/AREAA/areaa-frontend && npm run check
 ```
 
-Expected: **16 tests** — the 7-renderer loop yields 14, plus 2 standalone. 0 errors.
+Expected: **20 tests** — the 6-renderer loop yields 18 (3 each, the first proving the href reaches the anchor), plus 2 standalone. 0 errors.
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-frontend && \
-  git add src/components/Hero.astro src/components/Section.astro tests/unit/cta-link-safety.test.ts && \
+  git add src/lib/links.ts \
+          src/components/Hero.astro src/components/Section.astro \
+          src/components/Events.astro src/components/NewMembers.astro \
+          src/components/Spotlight.astro src/components/RichTextInline.astro \
+          tests/unit/cta-link-safety.test.ts && \
   git commit -m "fix: external CTAs open in a new tab with a rel guard"
 ```
+
+All seven files, not two — the earlier list was left over from the
+two-renderer draft and would have committed components importing an untracked
+`links.ts`, red on a clean checkout.
 
 ---
 
@@ -1776,7 +1990,7 @@ cd /Users/nk/Projects/AREAA/areaa-frontend && npm test
 cd /Users/nk/Projects/AREAA/areaa-frontend && npm run check
 ```
 
-Expected: **276 CMS**, **121 frontend**, 0 typecheck errors, `pages_cmps`
+Expected: **277 CMS**, **131 frontend**, 0 typecheck errors, `pages_cmps`
 byte-identical across two CMS runs, and the extended copy snapshot unchanged.
 
 ### Task 9: Prove it in a browser
@@ -1810,29 +2024,44 @@ Restore, verify against the snapshot, then stop the servers.
 **The restore must also unwind the uploads.** Rows 4 and 9 create `files` rows,
 `files_folder_lnk` rows and bytes under `public/uploads`; pointing `figure` back
 at file 12 leaves all of that behind, and the snapshot diff reports clean while
-the media library has grown. Record `SELECT MAX(id) FROM files` before starting,
-and afterwards:
+the media library has grown. Record the high-water mark **before starting**:
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-cms && \
-  sqlite3 .tmp/data.db "DELETE FROM files_related_mph WHERE file_id > $MAXID; \
-                        DELETE FROM files_folder_lnk WHERE file_id > $MAXID; \
-                        SELECT url FROM files WHERE id > $MAXID;" && \
-  sqlite3 .tmp/data.db "DELETE FROM files WHERE id > $MAXID;"
+  set MAXID (sqlite3 .tmp/data.db "SELECT MAX(id) FROM files;") && echo "MAXID=$MAXID"
 ```
 
-then `rm` the printed paths under `public/`. Do this **before** `pkill`.
+(fish syntax — `$MAXID` unset expands to nothing and the `WHERE` below becomes a
+syntax error rather than deleting everything, but capture it properly.)
+
+Then, **after** the figure has been pointed back at its original file and
+**before** `pkill` — in that order, or the hero loses its image with nothing to
+restore it from:
+
+```bash
+cd /Users/nk/Projects/AREAA/areaa-cms && \
+  sqlite3 .tmp/data.db "SELECT url FROM files WHERE id > $MAXID; \
+                        SELECT formats FROM files WHERE id > $MAXID;" && \
+  sqlite3 .tmp/data.db "DELETE FROM files_related_mph WHERE file_id > $MAXID; \
+                        DELETE FROM files_folder_lnk WHERE file_id > $MAXID; \
+                        DELETE FROM files WHERE id > $MAXID;"
+```
+
+`rm` every printed path under `public/` — **including the ones inside
+`formats`**. A real upload generates `thumbnail_…` and `small_…` derivatives
+whose urls live only in that JSON column; selecting `url` alone leaves them on
+disk. Verified against the seed: file 1 carries two.
 
 ---
 
 ## Done when
 
-- **276 CMS and 121 frontend tests green**, CMS twice, `pages_cmps` byte-identical.
+- **277 CMS and 131 frontend tests green**, CMS twice, `pages_cmps` byte-identical.
 - A chapter admin changes a button's text and link, **with JavaScript disabled**, and the public microsite shows it.
 - A chapter admin replaces the hero placeholder with a real image, and the microsite shows it.
 - The **button** is written at draft and published under plan 5's content-parity gate. The **image** is written at both unconditionally — media rows are not draft/published, so there is nothing to diverge (Task 4 Step 3 says so; this criterion used to contradict it).
 - `javascript:` is refused and **the reason reaches the screen** — not "reload and try again".
-- `//evil.example` is stored absolute, **and** `Hero.astro`/`Section.astro` render an off-site CTA with `target="_blank"` and `rel="noopener noreferrer"` (Task 7). Neither half is worth much without the other.
+- `//evil.example` is stored absolute, **and all five reachable CTA renderers** — Hero (both slots), Section, Events, NewMembers, Spotlight — render an off-site CTA with `target="_blank"` and `rel="noopener noreferrer"` (Task 7). Neither half is worth much without the other, and each renderer is proved to receive the href before the guard is asserted.
 - A section with no button offers no button fields; one with no image offers no file field.
 - All six `normaliseUrl` mutations are killed, on a baseline asserted green first.
 - Permissions are still **25** — this plan adds no routes.
@@ -1874,10 +2103,6 @@ diagnostic rather than a gate.
   portrait photo into a landscape hero and it will be cropped by CSS.
 - **`videoUrl` and `feedUrl` remain national-only**, so a chapter cannot point
   its own video or social feed anywhere.
-- **The external-link inference is a regex on the stored href.** Task 7 adds it
-  to `Hero.astro` and `Section.astro`, matching what `RichTextInline` already
-  does. Two copies of `/^https?:\/\//i` now exist with nothing asserting they
-  agree; a third renderer would need a third.
-- **`secondaryCta` is never exercised.** aloha's hero carries only `primaryCta`,
-  no walkthrough row touches a second button, and only one render test does. The
-  slot map says hero and section carry two; nothing proves the second works.
+- **The external-link inference is one regex in `src/lib/links.ts`**, imported by the five reachable CTA renderers and by `RichTextInline`. A sixth renderer gets it by importing, not by copying — but nothing *enforces* the import, so a new component with a bare `<a href>` would silently miss it.
+- **`shared.partner-callout` has a `link` in its schema and no renderer at all.** `PageBody` dispatches `partner-group` to `Partnership.astro` and lets `partner-callout` fall through to null; zero rows exist in any zone. It is excluded from `CTA_SLOTS` for that reason, so a chapter admin cannot edit a button nobody can see. If a renderer is ever added, the slot map and `CMPS_TABLE` both need an entry.
+- **`Partnership.astro`'s own button is not chapter-editable.** `toPartnershipProps` never forwards a `cta`, so it renders its hardcoded `/partners` default. Out of scope here, but it means one visible button on the microsite is still national-only.
