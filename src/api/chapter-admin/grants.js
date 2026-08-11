@@ -27,6 +27,23 @@ const AUTHENTICATED_GRANTS = [
   'plugin::users-permissions.user.directory',
 ];
 
+/**
+ * Actions the PUBLIC (unauthenticated) role is granted on boot.
+ *
+ * Only `capture`. Deliberately NOT the core router's `create`: that accepts
+ * arbitrary attributes, so a spammer could POST `handled: true` to hide their
+ * own submission from the screen built to surface it, or attribute it to any
+ * chapter. And never `find` — that would publish every enquiry the association
+ * has ever received.
+ *
+ * Here rather than in scripts/seed.js, which is where the other public reads
+ * live, because the seed only runs on demand: a deploy that did not re-seed
+ * would ship a contact form posting to a 403.
+ */
+const PUBLIC_GRANTS = [
+  'api::form-submission.form-submission.capture',
+];
+
 const CHAPTER_ADMIN_GRANTS = [
   ...AUTHENTICATED_GRANTS,
 
@@ -62,4 +79,4 @@ const CHAPTER_ADMIN_GRANTS = [
   'api::chapter-admin.chapter-admin.updateSubmission',
 ];
 
-module.exports = { AUTHENTICATED_GRANTS, CHAPTER_ADMIN_GRANTS };
+module.exports = { AUTHENTICATED_GRANTS, CHAPTER_ADMIN_GRANTS, PUBLIC_GRANTS };

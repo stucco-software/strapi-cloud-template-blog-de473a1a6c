@@ -1,7 +1,7 @@
 'use strict';
 
 const {
-  AUTHENTICATED_GRANTS, CHAPTER_ADMIN_GRANTS,
+  AUTHENTICATED_GRANTS, CHAPTER_ADMIN_GRANTS, PUBLIC_GRANTS,
 } = require('./api/chapter-admin/grants');
 
 // Chapter admins are ordinary up_users with an elevated role — never Strapi
@@ -58,5 +58,11 @@ module.exports = {
     }
 
     await grant(strapi, chapterAdmin.id, CHAPTER_ADMIN_GRANTS);
+
+    // The public contact form. One action, and only this one — see PUBLIC_GRANTS.
+    const publicRole = await strapi
+      .query('plugin::users-permissions.role')
+      .findOne({ where: { type: 'public' } });
+    if (publicRole) await grant(strapi, publicRole.id, PUBLIC_GRANTS);
   },
 };
