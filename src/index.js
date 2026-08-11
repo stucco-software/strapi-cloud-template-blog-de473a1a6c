@@ -3,6 +3,7 @@
 const {
   AUTHENTICATED_GRANTS, CHAPTER_ADMIN_GRANTS, PUBLIC_GRANTS,
 } = require('./api/chapter-admin/grants');
+const { seedCapabilities } = require('./api/member-capability/seed');
 
 // Chapter admins are ordinary up_users with an elevated role — never Strapi
 // admin-panel seats, which are billed per user. `user.role` is manyToOne, so a
@@ -37,6 +38,9 @@ module.exports = {
   register(/* { strapi } */) {},
 
   async bootstrap({ strapi }) {
+    // Capabilities first: the backfill at the end of this function reads them.
+    await seedCapabilities(strapi);
+
     const authenticated = await strapi
       .query('plugin::users-permissions.role')
       .findOne({ where: { type: 'authenticated' } });
