@@ -194,12 +194,43 @@ describe('normaliseUrl', () => {
     }
   });
 
+  it('returns null rather than throwing when the path normalises to an authority', () => {
+    // `new URL('//', base)` throws. Fuzzing found 54 inputs that reach it, and
+    // every one produced an HTTP 500 with no message because shapeCtaEdit
+    // calls this outside any try.
+    for (const u of ['/..//', '/.//', './/', '..//', 'a/..//', '/..///', '/.\\']) {
+      expect(() => normaliseUrl(u), JSON.stringify(u)).not.toThrow();
+      expect(normaliseUrl(u), JSON.stringify(u)).toBeNull();
+    }
+  });
+
+  it('REJECTS anything that normalises to an empty href', () => {
+    // `?` and `?#` produced '' — stored, rendering <a href=""> which reloads
+    // the page, and contradicting this plan's own "a blank is a 400" rule.
+    for (const u of ['?', '?#', '#']) {
+      expect(normaliseUrl(u), JSON.stringify(u)).toBeNull();
+    }
+  });
+
+  it('caps the OUTPUT, not just the input', () => {
+    // Percent-encoding can triple the length. An 801-char href that stores as
+    // 2401 saves once and then fails every later save of that section forever.
+    const long = '/' + '<'.repeat(800);
+    expect(long.length).toBeLessThan(MAX_URL_LEN);
+    expect(normaliseUrl(long)).toBeNull();
+  });
+
   it('is idempotent — normalising twice changes nothing', () => {
     // A save re-reads and re-writes; a non-idempotent normaliser would drift a
     // href on every edit.
+    // Includes the inputs that broke the first draft's version of this test:
+    // it hand-picked six that happened to work while asserting a property that
+    // was false for '?' (→ '') and for anything percent-expanding.
     for (const u of ['/join', '#contact', 'https://areaa.org/x', 'mailto:a@b.org',
-                     '//evil.example/x', '/.//evil.example/x']) {
+                     '//evil.example/x', '/.//evil.example/x', '/a b', '/%2e%2e//x',
+                     '/events?q=a b#top']) {
       const once = normaliseUrl(u);
+      if (once === null) continue;
       expect(normaliseUrl(once), JSON.stringify(u)).toBe(once);
     }
   });
@@ -249,37 +280,54 @@ const BASE_ORIGIN = new URL(BASE).origin;
 function normaliseUrl(url) {
   if (typeof url !== 'string') return null;
   const raw = url.trim();
-  if (raw === '' || raw.length > MAX_URL_LEN) return null;
+  if (raw === '') return null;
+  // The cap is re-checked on the OUTPUT at the end. Checking only the input
+  // lets an 801-character href normalise to 2401 percent-encoded characters,
+  // store fine, and then fail every subsequent save of that section forever —
+  // the same trap `page-content.js` documents for MAX_TEXT_LEN.
+  if (raw.length > MAX_URL_LEN) return null;
 
-  let parsed;
+  // EVERYTHING inside the try. `new URL('//', base)` throws — there is no host
+  // — and a pathname can normalise to exactly `//` from ordinary-looking input.
+  // Fuzzing found 54 such strings (`/..//`, `.//`, `/.\`, `a/..//`, …); each
+  // one produced an uncaught TypeError and an HTTP 500 with no message,
+  // because shapeCtaEdit calls this outside any try.
+  let out;
   try {
-    parsed = new URL(raw, `${BASE}/`);
+    const parsed = new URL(raw, `${BASE}/`);
+
+    if (!ALLOWED_SCHEMES.includes(parsed.protocol)) return null;
+    if (parsed.username !== '' || parsed.password !== '') return null;
+
+    if (parsed.origin !== BASE_ORIGIN) {
+      out = parsed.href;                       // off-site: absolute, so the
+                                               // renderer can tell
+    } else {
+      const rel = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+
+      if (rel.startsWith('//')) {
+        // The path itself is an authority. `/.//evil.example/x` normalises to
+        // `//evil.example/x`, which renders as an in-site link and navigates
+        // off-site.
+        out = new URL(rel, `${BASE}/`).href;
+      } else if (parsed.pathname === '/' && raw.startsWith('#')) {
+        out = parsed.hash;                     // `#contact` scrolls; `/#contact`
+      } else if (parsed.pathname === '/' && raw.startsWith('?')) {
+        out = `${parsed.search}${parsed.hash}`;
+      } else {
+        out = rel;
+      }
+    }
   } catch {
     return null;
   }
 
-  if (!ALLOWED_SCHEMES.includes(parsed.protocol)) return null;
-  if (parsed.username !== '' || parsed.password !== '') return null;
-
-  // Off-site: return it absolute so the renderer's external-link handling sees
-  // the truth.
-  if (parsed.origin !== BASE_ORIGIN) return parsed.href;
-
-  // Same-origin as the parsing base => genuinely relative. Keep it relative, or
-  // every internal link would point at base.invalid.
-  const rel = `${parsed.pathname}${parsed.search}${parsed.hash}`;
-
-  // ...unless the path itself starts with `//`, which a browser reads as an
-  // authority. `/.//evil.example/x` normalises to `//evil.example/x`, which
-  // would render as an in-site link and navigate off-site.
-  if (rel.startsWith('//')) return `${new URL(rel, `${BASE}/`).href}`;
-
-  // A bare fragment or query must stay bare: `#contact` scrolls, `/#contact`
-  // navigates to the site root.
-  if (parsed.pathname === '/' && raw.startsWith('#')) return parsed.hash || '#';
-  if (parsed.pathname === '/' && raw.startsWith('?')) return `${parsed.search}${parsed.hash}`;
-
-  return rel;
+  // `?` and `?#` reach here as the empty string, which would store href="" and
+  // render <a href=""> — a link that reloads the page. Both fields are
+  // required:true on the component; an empty result is a refusal.
+  if (typeof out !== 'string' || out === '') return null;
+  if (out.length > MAX_URL_LEN) return null;
+  return out;
 }
 
 module.exports = { normaliseUrl, MAX_URL_LEN, ALLOWED_SCHEMES };
@@ -292,7 +340,7 @@ cd /Users/nk/Projects/AREAA/areaa-cms && PATH="/opt/homebrew/bin:$PATH" \
   npx vitest run tests/unit/safe-url.test.js
 ```
 
-Expected: PASS, **11 tests**.
+Expected: PASS, **14 tests**.
 
 - [ ] **Step 5: Mutation-check, with a green baseline first**
 
@@ -486,7 +534,7 @@ cd /Users/nk/Projects/AREAA/areaa-cms && PATH="/opt/homebrew/bin:$PATH" \
   npx vitest run tests/unit/page-content.test.js
 ```
 
-Expected: **53 tests** (42 + 11) — 3 `ctaSlotsFor`, 8 `shapeCtaEdit`.
+Expected: **54 tests** (42 + 12) — 3 `ctaSlotsFor`, 8 `shapeCtaEdit`, 1 table-parity.
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-cms && \
@@ -541,9 +589,21 @@ async function ctaIn(strapiInstance, parentType, parentId, slot) {
 
 **Every name in that map must be checked against `sqlite_master` before anything
 depends on it** — Task 4 Step 1 does exactly that, and it is a gate, not a
-formality. Add a unit test asserting `Object.keys(CMPS_TABLE)` equals
-`Object.keys(CTA_SLOTS)`, so a component gaining a CTA slot without a table entry
-fails loudly instead of quietly showing no buttons.
+formality.
+
+`CMPS_TABLE` lives beside `CTA_SLOTS` in **`services/page-content.js`**, not in
+the controller, and both are exported — otherwise the parity test below cannot
+be written. Add it to Task 2's file, which brings that suite to **54**:
+
+```js
+  it('has a join table for every type that declares a CTA slot', () => {
+    // Without this, a component gaining a slot without a table entry shows no
+    // buttons and saves nothing — silently, with a 200. `ctaIn` returns null
+    // for an unknown table and `getPage` filters nulls, so the runtime failure
+    // is invisible. This test is the only loud one.
+    expect(Object.keys(CMPS_TABLE).sort()).toEqual(Object.keys(CTA_SLOTS).sort());
+  });
+```
 
 In the section loop, alongside `values`:
 
@@ -561,6 +621,41 @@ both statuses, **through the same content-parity gate the text fields use** —
 the reason is identical: position plus type is not proof two rows are the same
 component, and an unpublished national edit must not be published as a side
 effect.
+
+```js
+    // --- text --------------------------------------------------------------
+    // `shapeComponentEdit` THROWS when no whitelisted text field is present.
+    // That is correct for plan 5, where text was the only thing a save could
+    // carry — but a buttons-only or image-only payload has none, and without
+    // this the CTA and image code below is unreachable. Verified: every
+    // cta-only save returned `400 Nothing editable was submitted`, three of
+    // this plan's own tests failed, and four more passed against a guard that
+    // never reached the code they name.
+    const hasExtras = Boolean(input.ctas) || input.figureId !== undefined;
+    let data = {};
+    try {
+      data = shapeComponentEdit(input, pair.type);
+    } catch (err) {
+      if (!(err instanceof BadInputError)) throw err;
+      // Only tolerable when the save is carrying something else.
+      if (!hasExtras || err.message !== 'Nothing editable was submitted') {
+        return ctx.badRequest(err.message);
+      }
+    }
+
+**Plan 5's text-write line changes too.** It currently reads
+
+```js
+    const targets = [pair.draftId, publishedId].filter((id) => id !== null);
+```
+
+and must become
+
+```js
+    // Empty when the save carries only buttons or only an image.
+    const targets = Object.keys(data).length === 0
+      ? [] : [pair.draftId, publishedId].filter((id) => id !== null);
+```
 
 ```js
     // --- buttons -----------------------------------------------------------
@@ -596,20 +691,52 @@ effect.
     }
 ```
 
-Fold the weakest result into the response, **and give a diverged CTA its own
-reason** — otherwise a section whose text writes cleanly but whose button is
-diverged returns `wrote: 1` with `skipReason: null`, and the screen says "your
-live page hasn't changed yet" with no explanation:
+- [ ] **Step 2b: Report each facet, because they are gated independently**
 
-```js
-    const wrote = Math.min(targets.length, ...ctaResults.map((c) => c.wrote));
-    if (wrote < 2 && skipReason === null && ctaResults.some((c) => c.wrote < 2)) {
-      skipReason = 'content-diverged';
-    }
+A single `wrote` number cannot describe this save. Three things are written
+under three different rules: text is parity-gated, each button is parity-gated
+**separately**, and the image is ungated by design. Measured on aloha's Header
+card, where the text is diverged but the CTAs are byte-identical:
+
+```
+text  -> 1 (held back)      buttons -> 2 (live)      image -> 2 (live)
+Math.min(...) = 1  ->  "your live page hasn't changed yet"
 ```
 
-and report `{ wrote, ... }` with that `skipReason`. The screen's existing
-`draft:content-diverged` message already reads correctly for a button.
+…while the live page's button text and hero image had just changed. `Math.min`
+is also plain wrong once `targets` is empty: `Math.min(0, 2)` is 0.
+
+Report the facets and let the screen tell the truth:
+
+```js
+    const facets = [];
+    if (Object.keys(data).length > 0) facets.push({ kind: 'text', wrote: targets.length });
+    for (const c of ctaResults) facets.push({ kind: 'button', slot: c.slot, wrote: c.wrote });
+    if (wroteImage) facets.push({ kind: 'image', wrote: imageTargets.length });
+
+    const live = facets.filter((f) => f.wrote === 2).length;
+    const held = facets.filter((f) => f.wrote < 2).length;
+
+    ctx.body = {
+      data: { index, type: pair.type, facets, live, held },
+      meta: {
+        structureDiverged: found.structureDiverged,
+        // Only when something was actually held back.
+        skipReason: held > 0 ? (skipReason ?? 'content-diverged') : null,
+      },
+    };
+```
+
+The screen reads `live` and `held` rather than `wrote`:
+
+| `live` | `held` | Message |
+|---|---|---|
+| >0 | 0 | "Section saved." |
+| 0 | >0 | "Saved to your draft." + the `skipReason` explanation |
+| >0 | >0 | **"Saved. Part of this section is live now; the rest is waiting for AREAA national to publish."** |
+
+That third row is the case the first draft got wrong, and it is not rare — it is
+what aloha's Header does today.
 
 - [ ] **Step 3: Verify the wiring**
 
@@ -726,18 +853,30 @@ Write, after the text fields:
     // there is nothing to re-validate here beyond "is it a number".
     //
     // Media rows are NOT draft/published — one file, two component rows
-    // pointing at it — so both statuses attach the same id and the parity gate
-    // does not apply.
+    // pointing at it — so there is no unpublished-edit to accidentally publish.
+    //
+    // BUT the parity gate has a second job the first draft missed: it also
+    // catches a MISPAIRING. Position plus matching type is not proof two rows
+    // are the same component, and a same-type reorder in the draft means
+    // `pair.publishedId` can name a component the admin never opened. Use the
+    // gated `publishedId`, not the raw pair, or their new image lands publicly
+    // on someone else's section with a 200.
     const slot = mediaSlotFor(pair.type);
+    let wroteImage = false;
+    let imageTargets = [];
     if (input.figureId !== undefined && input.figureId !== null) {
       if (!slot) return ctx.badRequest('This section has no image');
+      // A string is legitimate — the form posts one — but it must be a whole
+      // positive number.
       const figureId = Number(input.figureId);
       if (!Number.isInteger(figureId) || figureId <= 0) {
         return ctx.badRequest('That image could not be attached');
       }
-      for (const id of [pair.draftId, pair.publishedId].filter(Boolean)) {
+      imageTargets = [pair.draftId, publishedId].filter(Boolean);
+      for (const id of imageTargets) {
         await strapi.db.query(pair.type).update({ where: { id }, data: { [slot]: figureId } });
       }
+      wroteImage = true;
     }
 ```
 
@@ -783,9 +922,66 @@ cd /Users/nk/Projects/AREAA/areaa-cms && \
 **Files:** Modify `tests/integration/page.test.js`
 
 This suite already snapshots and restores every editable column per row, per
-status. **Extend the snapshot to `shared.cta` rows and the media relation**
-before adding cases, or the restore silently stops covering what the new tests
-change.
+status — **for text only**. Left as-is, one green run permanently rewrites
+aloha's *published* hero button and *published* hero image with test junk.
+Measured:
+
+```
+175|Learn More|/about  ->  175|Isolated …|/join   (draft)
+178|Learn More|/about  ->  178|Isolated …|/join   (PUBLISHED)
+hero figure: file 12 (placeholder)  ->  file 1 ("Screenshot 2026-05-20…png")
+```
+
+The suite is also not re-runnable: the second run fails
+`expect(hero.image.url).toContain('placeholder')`, because the first run
+destroyed the placeholder that assertion depends on.
+
+- [ ] **Step 0: Extend the snapshot and the restore — before adding any case**
+
+In `beforeAll`, alongside the existing text capture:
+
+```js
+  // Every CTA row on this chapter's zone, both statuses.
+  ctaSnapshot = [];
+  for (const s of sections) {
+    for (const slot of (s.ctas ?? []).map((c) => c.slot)) {
+      for (const id of await ctaIdsFor(s.index, slot)) {
+        const row = await strapi.db.query('shared.cta').findOne({ where: { id } });
+        if (row) ctaSnapshot.push({ id, label: row.label, href: row.href });
+      }
+    }
+  }
+
+  // Every media relation on this chapter's zone, both statuses.
+  mediaSnapshot = await strapi.db.connection('files_related_mph')
+    .whereIn('related_id', (await Promise.all(
+      sections.map((s) => parentIdsFor(s.index)))).flat())
+    .select('related_id', 'related_type', 'field', 'file_id', 'order');
+```
+
+and in `afterAll`, inside the existing inner `try`:
+
+```js
+    for (const c of ctaSnapshot) {
+      await strapi.db.query('shared.cta')
+        .update({ where: { id: c.id }, data: { label: c.label, href: c.href } });
+    }
+    for (const m of mediaSnapshot) {
+      await strapi.db.query(m.related_type)
+        .update({ where: { id: m.related_id }, data: { [m.field]: m.file_id } });
+    }
+```
+
+Declare `ctaSnapshot` and `mediaSnapshot` beside `snapshot` at the top.
+
+Then replace the seed-dependent assertion, which the suite destroys:
+
+```diff
+-    expect(hero.image.url).toContain('placeholder');   // every chapter, today
++    // NOT toContain('placeholder') — this suite reassigns the figure, so that
++    // assertion passes once and fails on every later run.
++    expect(hero.image.url).toMatch(/^\/uploads\//);
+```
 
 - [ ] **Step 1: Write the tests**
 
@@ -884,6 +1080,22 @@ describe('PUT /api/chapter-admin/page — buttons', () => {
     expect(after).toEqual(before);
   });
 
+  it('ACCEPTS a save carrying only buttons, with no text field', async () => {
+    // The guard `shapeComponentEdit` throws is correct for plan 5 and fatal
+    // here: a buttons-only payload is what the form posts when the admin
+    // touched only the button. Without Task 3's hasExtras tolerance EVERY line
+    // of the CTA and image code is unreachable — verified: cta-only saves
+    // returned 400 "Nothing editable was submitted", and four tests in this
+    // very suite passed against that guard instead of the code they name.
+    const s = withCta();
+    const res = await save({ index: s.index, ctas: { [s.ctas[0].slot]: {
+      label: `Buttons only ${RUN}`, href: '/join' } } });
+    expect(res.status).toBe(200);
+    const [draftId] = await ctaIdsFor(s.index, s.ctas[0].slot);
+    expect((await strapi.db.query('shared.cta').findOne({ where: { id: draftId } })).label)
+      .toBe(`Buttons only ${RUN}`);
+  });
+
   it('400s a slot the section does not have', async () => {
     const gallery = sections.find((s) => s.type === 'shared.gallery');
     const res = await save({ index: gallery.index, ctas: { primaryCta: {
@@ -940,6 +1152,21 @@ describe('PUT /api/chapter-admin/page — image', () => {
     }
   });
 
+  it('ACCEPTS a save carrying only an image, with no text field', async () => {
+    const hero = sections.find((x) => x.type === 'shared.hero');
+    const current = await strapi.db.connection('files_related_mph')
+      .where({ related_id: hero.draftId, related_type: 'shared.hero', field: 'figure' }).first();
+    const file = await strapi.db.connection('files')
+      .whereNot('id', current?.file_id ?? -1).orderBy('id').first();
+    expect((await save({ index: hero.index, figureId: file.id })).status).toBe(200);
+  });
+
+  it('accepts a figureId posted as a string, which is what the form sends', async () => {
+    const hero = sections.find((x) => x.type === 'shared.hero');
+    const file = await strapi.db.connection('files').orderBy('id').first();
+    expect((await save({ index: hero.index, figureId: String(file.id) })).status).toBe(200);
+  });
+
   it('400s a figureId that is not a positive integer', async () => {
     const hero = sections.find((s) => s.type === 'shared.hero');
     for (const bad of [0, -1, 1.5, 'abc', {}]) {
@@ -964,7 +1191,7 @@ cd /Users/nk/Projects/AREAA/areaa-cms && pkill -f "strapi develop" ; \
 cd /Users/nk/Projects/AREAA/areaa-cms && PATH="/opt/homebrew/bin:$PATH" npm test
 ```
 
-Expected: **30 tests** in that file (18 + 12 — 7 buttons, 5 image), then **269 overall** (235 + 11 safe-url + 11 page-content + 12 integration).
+Expected: **33 tests** in that file (18 + 15 — 8 buttons, 7 image), then **276 overall** (235 + 14 safe-url + 12 page-content + 15 integration).
 
 - [ ] **Step 3: Prove the copy, the buttons AND the image came back**
 
@@ -1049,6 +1276,20 @@ and the screen renders it, falling back when the server sent nothing:
     invalid: why || "Please check that section and try again.",
 ```
 
+**Two consequences the first draft did not weigh.** The value is reflected
+verbatim into a `role="alert"` box, so (a) a crafted URL can put arbitrary text
+on an admin's own page — Astro escapes it, so it is a phishing surface rather
+than an XSS, but plan 5's `why` was looked up in a fixed map and this one is
+not; and (b) every reachable 400 message is now admin-facing copy. Audit them
+before shipping: `chapterSlug is required`, `title is too long`,
+`Nothing editable was submitted` and `body is too long` all read as developer
+strings. Either rewrite those messages in `page-content.js`, or map a small set
+of known reasons on the screen and fall back for the rest — the latter keeps
+the reflection surface closed and is the smaller change.
+
+`error=stale` becomes unreachable once 400s carry `invalid`; delete it from
+`errorMessages` rather than leaving dead copy.
+
 - [ ] **Step 1b: Types**
 
 ```ts
@@ -1062,8 +1303,10 @@ export interface PageSection {
     editable: string[];
     readOnlyReason: "rich-body" | "not-editable" | null;
     values: Record<string, string>;
-    ctas: PageCta[];
-    image: PageImage | null;
+    // OPTIONAL, deliberately. Plan 5's test fixtures carry neither, and an API
+    // one deploy behind sends neither. The component reads both defensively.
+    ctas?: PageCta[];
+    image?: PageImage | null;
 }
 ```
 
@@ -1135,8 +1378,17 @@ rendered — and pulls `cta.<slot>.label` / `cta.<slot>.href` for each. Exactly 
 `editableFields` pattern plan 5 uses, for the same reason: the route cannot know
 which slots a section has, and the server whitelists again regardless.
 
-**Both of plan 5's early returns have to move**, or a section with buttons but no
-editable text never posts:
+**Both of plan 5's early returns have to move.** Note this is currently
+*unreachable from the UI*: `PageSectionForm` gates the whole `<form>` on
+`canEdit = section.editable.length > 0`, so a section with buttons and no
+editable text renders no form at all. Every CTA-bearing type has `title` today,
+so nothing breaks — but the guard and the server's matching `hasExtras`
+tolerance (Task 3 Step 2) are what make the capability real rather than
+asserted, and the first type without editable text would otherwise fail with
+`Nothing editable was submitted` shown verbatim to the admin.
+
+Change `canEdit` to `section.editable.length > 0 || (section.ctas ?? []).length > 0 || section.image`
+in the same step, or the relaxation below is dead code:
 
 ```diff
 -    if (editable.length === 0) return null;
@@ -1166,9 +1418,13 @@ const image = section.image ?? null;
 ```astro
     <input type="hidden" name="ctaSlots" value={ctas.map((c) => c.slot).join(",")} />
 
-    {ctas.map((cta) => (
+    {ctas.map((cta, i) => (
         <fieldset class="psec__cta">
-            <legend>{cta.slot === "secondaryCta" ? "Second button" : "Button"}</legend>
+            {/* By POSITION among the rendered slots, not by slot name: a
+                section whose only CTA sits in `secondaryCta` — which is aloha's
+                Text Section — would otherwise be headed "Second button" with no
+                first button anywhere. */}
+            <legend>{ctas.length > 1 ? `Button ${i + 1}` : "Button"}</legend>
             <FormField label="Button text" name={`cta.${cta.slot}.label`} value={cta.label} required />
             <FormField label="Button links to" name={`cta.${cta.slot}.href`} value={cta.href}
                 helper="A page on this site, like /events, or a full web address." />
@@ -1190,6 +1446,24 @@ const image = section.image ?? null;
 
 `mediaUrl` from `../lib/media` — Strapi's local provider stores `/uploads/…`,
 which 404s when rendered from the Astro origin.
+
+**The file input needs a unique id.** `FormField.astro` builds
+`id={`field-${name}`}`, and `MEDIA_SLOTS` covers both `shared.hero` and
+`shared.section` — aloha's zone has one of each, so two elements would carry
+`id="field-figure"` and clicking the Text Section's "Replace image" label would
+open the **Header's** file picker. Plan 5 already duplicates `field-title` across
+eleven cards, but a label *is* the affordance for a file input, and this is the
+first case where mis-targeting changes which section gets edited.
+
+Give `FormField` an optional `idSuffix` and pass `section.index`:
+
+```astro
+    <FormField label="Replace image" name="figure" type="file" idSuffix={String(section.index)}
+        accept="image/jpeg,image/png,image/webp,image/avif"
+        helper="Leave empty to keep the current image." />
+```
+
+with a render test asserting two sections produce two different ids.
 
 The `<form>` tag gains `enctype="multipart/form-data"` **unconditionally**, not
 only when an image slot is present: it is harmless for a text-only section and a
@@ -1276,7 +1550,12 @@ describe("PageSectionForm — buttons and image", () => {
         // must too, or the preview is a broken image on every chapter.
         const html = await render({ section: section({
             image: { slot: "figure", url: "/uploads/placeholder.png" } }) });
-        expect(html).toContain("http://localhost:1337/uploads/placeholder.png");
+        // NOT a hardcoded origin: mediaUrl reads STRAPI_URL, so asserting
+        // "http://localhost:1337/…" turns a dev pointed at staging red for
+        // reasons unrelated to the code. Verified: STRAPI_URL=https://…
+        // fails that assertion.
+        expect(html).toContain(mediaUrl({ url: "/uploads/placeholder.png" }));
+        expect(html).not.toContain('src="/uploads/');
         expect(html).toContain('type="file"');
         expect(html).toContain("multipart/form-data");
     });
@@ -1284,6 +1563,37 @@ describe("PageSectionForm — buttons and image", () => {
     it("renders NO image field for a section without one", async () => {
         const html = await render({ section: section({ image: null }) });
         expect(html).not.toContain('type="file"');
+    });
+
+    it("posts as multipart even when the section has no image", async () => {
+        // Unconditional by design — a conditional enctype is one more thing to
+        // get wrong per component type. Mutating it to be conditional survived
+        // the first draft's tests, because the only enctype assertion rendered
+        // a section that HAD an image.
+        const html = await render({ section: section({ image: null }) });
+        expect(html).toContain("multipart/form-data");
+    });
+
+    it("marks both button fields required, as the schema does", async () => {
+        // label and href are both required:true on shared.cta. Dropping either
+        // survived the first draft's tests.
+        const html = await render({ section: withCta });
+        const label = html.slice(html.indexOf('name="cta.primaryCta.label"') - 200,
+                                 html.indexOf('name="cta.primaryCta.label"') + 200);
+        const href = html.slice(html.indexOf('name="cta.primaryCta.href"') - 200,
+                                html.indexOf('name="cta.primaryCta.href"') + 200);
+        expect(label).toContain("required");
+        expect(href).toContain("required");
+    });
+
+    it("names a lone secondary button plainly, not 'Second button'", async () => {
+        // aloha's Text Section carries its ONLY cta in the secondaryCta slot,
+        // so a naive `slot === 'secondaryCta' ? 'Second button'` heads that
+        // card with "Second button" and no first. Label by position among the
+        // rendered slots, not by slot name.
+        const html = await render({ section: section({
+            ctas: [{ slot: "secondaryCta", label: "View Benefits", href: "/membership" }] }) });
+        expect(html).not.toContain("Second button");
     });
 
     it("survives a section whose ctas and image are absent entirely", async () => {
@@ -1304,7 +1614,7 @@ cd /Users/nk/Projects/AREAA/areaa-frontend && npm run check
 cd /Users/nk/Projects/AREAA/areaa-frontend && npm test
 ```
 
-Expected: 0 errors, then **102 passed** (90 + 6 payload + 6 render). Task 7 takes it to **105**.
+Expected: 0 errors, then **105 passed** (90 + 6 payload + 9 render). Task 7 takes it to **121**.
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-frontend && git add -A src/ tests/ && \
@@ -1315,7 +1625,25 @@ cd /Users/nk/Projects/AREAA/areaa-frontend && git add -A src/ tests/ && \
 
 ### Task 7: External CTAs get a rel guard
 
-**Files:** Modify `src/components/Hero.astro`, `src/components/Section.astro`; modify `tests/unit/` (new render test file)
+**Files:** Modify `src/components/{Hero,Section,Events,NewMembers,Spotlight,Partnership}.astro`; create `tests/unit/cta-link-safety.test.ts`
+
+**Six renderers, not two.** `CTA_SLOTS` makes `link` editable on
+`upcoming-events`, `member-group`, `news-and-resources` and `partner-callout`
+as well as the two `primaryCta`/`secondaryCta` types — and all four render a
+bare `<a href={cta.href}>`:
+
+| Component | Renderer | Line |
+|---|---|---|
+| hero | `Hero.astro` | 48, 56 |
+| section | `Section.astro` | 54, 62 |
+| upcoming-events | `Events.astro` | 76 |
+| member-group | `NewMembers.astro` | 67 |
+| news-and-resources | `Spotlight.astro` | 66 |
+| partner-callout | `Partnership.astro` | 40 |
+
+Patching two of six leaves an admin who points the Upcoming Events button at
+`https://evil.example` with exactly the unguarded `window.opener` this task
+exists to close.
 
 Chunk 1 normalises an off-site href to absolute **so the renderer can tell it is
 off-site**. Verified: it cannot. `Hero.astro:46-53` and `Section.astro` render
@@ -1336,46 +1664,85 @@ Done-when criterion built on it is false.
 import { describe, it, expect } from "vitest";
 import { experimental_AstroContainer as AstroContainer } from "astro/container";
 import Hero from "../../src/components/Hero.astro";
+import Section from "../../src/components/Section.astro";
+import Events from "../../src/components/Events.astro";
+import NewMembers from "../../src/components/NewMembers.astro";
+import Spotlight from "../../src/components/Spotlight.astro";
+import Partnership from "../../src/components/Partnership.astro";
 
-const render = async (href: string) => {
-    const container = await AstroContainer.create();
-    return container.renderToString(Hero, { props: {
-        heading: "H", primaryCta: { label: "Go", href } } });
-};
+const container = await AstroContainer.create();
+const cta = (href: string) => ({ label: "Go", href });
 
-describe("Hero CTA link safety", () => {
-    it("opens an off-site button in a new tab, with a rel guard", async () => {
-        const html = await render("https://evil.example/x");
-        expect(html).toContain('rel="noopener noreferrer"');
-        expect(html).toContain('target="_blank"');
-    });
+// One entry per renderer that consumes a chapter-settable CTA. Testing only
+// Hero leaves five untested — verified by mutation: reverting Section.astro
+// entirely, and dropping the secondaryCta spread in Hero, both left the
+// original three-test suite green.
+const CASES: [string, (href: string) => Promise<string>][] = [
+    ["Hero primary",   (h) => container.renderToString(Hero, { props: { heading: "H", primaryCta: cta(h), secondaryCta: null } })],
+    ["Hero secondary", (h) => container.renderToString(Hero, { props: { heading: "H", primaryCta: null, secondaryCta: cta(h) } })],
+    ["Section",        (h) => container.renderToString(Section, { props: { heading: "H", primaryCta: cta(h), secondaryCta: null } })],
+    ["Events",         (h) => container.renderToString(Events, { props: { heading: "E", events: [], link: cta(h) } })],
+    ["NewMembers",     (h) => container.renderToString(NewMembers, { props: { heading: "M", members: [], link: cta(h) } })],
+    ["Spotlight",      (h) => container.renderToString(Spotlight, { props: { heading: "S", link: cta(h) } })],
+    ["Partnership",    (h) => container.renderToString(Partnership, { props: { heading: "P", link: cta(h) } })],
+];
 
-    it("leaves an in-site button alone", async () => {
-        // Same-tab navigation is what an admin means by /events, and a rel
-        // guard on it would be noise.
-        const html = await render("/events");
-        expect(html).not.toContain("noopener");
-        expect(html).not.toContain('target="_blank"');
-    });
+describe("CTA link safety", () => {
+    for (const [name, render] of CASES) {
+        it(`${name}: opens an off-site button in a new tab, with a rel guard`, async () => {
+            const html = await render("https://evil.example/x");
+            expect(html).toContain('rel="noopener noreferrer"');
+            expect(html).toContain('target="_blank"');
+        });
+
+        it(`${name}: leaves an in-site button alone`, async () => {
+            // Same-tab is what an admin means by /events; a rel guard would be
+            // noise, and target="_blank" would be a regression.
+            const html = await render("/events");
+            expect(html).not.toContain("noopener");
+            expect(html).not.toContain('target="_blank"');
+        });
+    }
 
     it("treats a fragment and a mailto as in-site", async () => {
         for (const href of ["#contact", "mailto:hi@areaa.org"]) {
-            expect(await render(href), href).not.toContain('target="_blank"');
+            const html = await CASES[0][1](href);
+            expect(html, href).not.toContain('target="_blank"');
         }
+    });
+
+    it("is case-insensitive about the scheme, and ignores protocol-relative", async () => {
+        // `//evil.example` should never reach a renderer — Chunk 1 absolutises
+        // it — but if it did, adding target/rel would be wrong: the browser
+        // treats it as same-scheme, and the regex must not half-match.
+        expect(await CASES[0][1]("HTTPS://evil.example/x")).toContain('target="_blank"');
+        expect(await CASES[0][1]("//evil.example/x")).not.toContain('target="_blank"');
     });
 });
 ```
 
+`Hero`'s props default `primaryCta`/`secondaryCta` to `{href: "#"}`, so pass
+`null` explicitly for the one under test — that is what `toCta()` returns in
+production, and without it the assertion partly tests a default.
+
 - [ ] **Step 2: Implement**
 
-Reuse the shape `RichTextInline` already uses, so the two agree:
+Reuse the shape `RichTextInline` already uses, so they agree. Put it in **one
+place** — `src/lib/links.ts` — rather than copying it into six components:
 
-```astro
-const isExternal = (url?: string | null) => !!url && /^https?:\/\//i.test(url);
+```ts
+/** Off-site, and therefore worth a rel guard. Matches RichTextInline's rule. */
+export const isExternal = (url?: string | null) => !!url && /^https?:\/\//i.test(url);
+
+/** Spread onto an anchor. */
+export const linkGuard = (url?: string | null) =>
+    isExternal(url) ? { target: "_blank", rel: "noopener noreferrer" } : {};
 ```
 
-and spread `{...(isExternal(cta.href) ? { target: "_blank", rel: "noopener noreferrer" } : {})}`
-onto each CTA anchor in both components.
+Import it into all six components and spread `{...linkGuard(cta.href)}` onto
+**every** CTA anchor — including `secondaryCta`, which is the one a mutation
+proved untested. Update `RichTextInline` to import it too, so the sixth copy of
+the regex does not become a seventh.
 
 **This is why Chunk 1 absolutises.** A stored `//evil.example/x` does not match
 that regex; `https://evil.example/x` does. Normalising is what makes the
@@ -1388,7 +1755,7 @@ cd /Users/nk/Projects/AREAA/areaa-frontend && npx vitest run tests/unit/cta-link
 cd /Users/nk/Projects/AREAA/areaa-frontend && npm run check
 ```
 
-Expected: **3 tests**, 0 errors.
+Expected: **16 tests** — the 7-renderer loop yields 14, plus 2 standalone. 0 errors.
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-frontend && \
@@ -1409,7 +1776,7 @@ cd /Users/nk/Projects/AREAA/areaa-frontend && npm test
 cd /Users/nk/Projects/AREAA/areaa-frontend && npm run check
 ```
 
-Expected: **269 CMS**, **105 frontend**, 0 typecheck errors, `pages_cmps`
+Expected: **276 CMS**, **121 frontend**, 0 typecheck errors, `pages_cmps`
 byte-identical across two CMS runs, and the extended copy snapshot unchanged.
 
 ### Task 9: Prove it in a browser
@@ -1429,22 +1796,38 @@ statuses agree.
 | 1 | `/page`, the Text Section card | Heading, Body Text, **Button text** "View Membership Benefits", **Button links to** `/membership` |
 | 2 | Change it to "Join AREAA Hawaii" → `/chapters/aloha-hawaii` → Save | "Section saved." |
 | 3 | **Visit the microsite** | The section button says the new text and goes to the chapter page — **the thing this plan exists for** |
-| 4 | Upload a real image on the **Header** card → Save | Preview updates; the microsite hero shows it instead of the placeholder. (The image write is deliberately ungated, so this succeeds even though the hero's text is diverged.) |
+| 4 | Upload a real image on the **Header** card → Save | Preview updates and the microsite hero shows it. **Expect "Saved. Part of this section is live now; the rest is waiting…"** — the image and the buttons reach the live page, the diverged text does not. The Text Section has no image relation, which is why this one row uses the Header. |
 | 5 | Set a button link to `javascript:alert(1)` | Refused, and the screen shows **"That link is not a valid web address"** — not "reload and try again" |
 | 6 | Set a button link to `//evil.example` | Stored as `https://evil.example/`; the rendered link carries `target="_blank"` and `rel="noopener noreferrer"` (Task 7) |
 | 7 | Gallery card | Heading only — no button, no image field |
 | 8 | Upload a `.txt` renamed to `.png` | Refused with plan 1's reason, shown on screen |
 | 9 | Disable JavaScript, repeat 2 and 4 | Both work — a file input needs no JS either |
-| 10 | Edit the **Header**'s button text | "Saved to your draft…" with a reason naming the divergence — plan 5's guard, now covering CTAs |
+| 10 | Edit the **Header**'s button text and its heading together | **"Saved. Part of this section is live now…"** — the button writes at both statuses (its two rows are identical), the heading does not (they diverge). A single "saved to your draft" here would be a lie about the button. |
 | 11 | As `twochapter@areaa.test`, chapter B's page | B's own buttons, not A's |
 
 Restore, verify against the snapshot, then stop the servers.
+
+**The restore must also unwind the uploads.** Rows 4 and 9 create `files` rows,
+`files_folder_lnk` rows and bytes under `public/uploads`; pointing `figure` back
+at file 12 leaves all of that behind, and the snapshot diff reports clean while
+the media library has grown. Record `SELECT MAX(id) FROM files` before starting,
+and afterwards:
+
+```bash
+cd /Users/nk/Projects/AREAA/areaa-cms && \
+  sqlite3 .tmp/data.db "DELETE FROM files_related_mph WHERE file_id > $MAXID; \
+                        DELETE FROM files_folder_lnk WHERE file_id > $MAXID; \
+                        SELECT url FROM files WHERE id > $MAXID;" && \
+  sqlite3 .tmp/data.db "DELETE FROM files WHERE id > $MAXID;"
+```
+
+then `rm` the printed paths under `public/`. Do this **before** `pkill`.
 
 ---
 
 ## Done when
 
-- **269 CMS and 105 frontend tests green**, CMS twice, `pages_cmps` byte-identical.
+- **276 CMS and 121 frontend tests green**, CMS twice, `pages_cmps` byte-identical.
 - A chapter admin changes a button's text and link, **with JavaScript disabled**, and the public microsite shows it.
 - A chapter admin replaces the hero placeholder with a real image, and the microsite shows it.
 - The **button** is written at draft and published under plan 5's content-parity gate. The **image** is written at both unconditionally — media rows are not draft/published, so there is nothing to diverge (Task 4 Step 3 says so; this criterion used to contradict it).
