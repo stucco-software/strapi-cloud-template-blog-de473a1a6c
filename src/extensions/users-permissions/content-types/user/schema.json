@@ -116,6 +116,12 @@
       "target": "api::member-capability.member-capability",
       "inversedBy": "holders"
     },
+    "ledCommittees": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::committee.committee",
+      "mappedBy": "leaders"
+    },
     "memberSince": {
       "type": "date",
       "private": true

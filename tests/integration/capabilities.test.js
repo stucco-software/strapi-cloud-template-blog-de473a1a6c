@@ -67,3 +67,39 @@ describe('User.capabilities', () => {
       .delete({ documentId: user.documentId });
   });
 });
+
+describe('Committee Leader scope', () => {
+  it('links a leader to committees by documentId, both ways', async () => {
+    // status:'draft' is not decoration. `committee` is draft-and-publish, so
+    // linking to the PUBLISHED numeric id yields an empty populate and every
+    // scope check 403s — the trap helpers.js:60 documents for chapters.
+    const committees = await strapi.documents('api::committee.committee')
+      .findMany({ fields: ['name'], limit: 1, status: 'draft' });
+    expect(committees).toHaveLength(1);
+
+    const user = await strapi.plugin('users-permissions').service('user').add({
+      username: 'leader@areaa.test', email: 'leader@areaa.test',
+      password: 'Password123!', confirmed: true, provider: 'local',
+      firstName: 'Lead', lastName: 'Er',
+      ledCommittees: [committees[0].id],
+    });
+
+    const read = await strapi.documents('plugin::users-permissions.user').findOne({
+      documentId: user.documentId,
+      populate: { ledCommittees: { fields: ['name'] } },
+    });
+    expect(read.ledCommittees.map((c) => c.documentId))
+      .toEqual([committees[0].documentId]);
+
+    // `username`, not `email`: email is private:true on the user schema and the
+    // content-API validator rejects a private field in `fields` outright.
+    const back = await strapi.documents('api::committee.committee').findOne({
+      documentId: committees[0].documentId, status: 'draft',
+      populate: { leaders: { fields: ['username'] } },
+    });
+    expect(back.leaders.map((u) => u.username)).toContain('leader@areaa.test');
+
+    await strapi.documents('plugin::users-permissions.user')
+      .delete({ documentId: user.documentId });
+  });
+});

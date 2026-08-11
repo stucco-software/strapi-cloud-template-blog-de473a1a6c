@@ -23,6 +23,12 @@
       "relation": "oneToMany",
       "target": "plugin::users-permissions.user"
     },
+    "leaders": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "plugin::users-permissions.user",
+      "inversedBy": "ledCommittees"
+    },
     "chapter": {
       "type": "relation",
       "relation": "manyToOne",
