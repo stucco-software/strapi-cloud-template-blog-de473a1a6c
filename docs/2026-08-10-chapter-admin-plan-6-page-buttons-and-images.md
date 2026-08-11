@@ -693,6 +693,7 @@ effect.
         return ctx.badRequest(err.message);
       }
     }
+```
 
 **VALIDATE EVERYTHING BEFORE WRITING ANYTHING.** The text write must move
 *below* the CTA and image validation. As ordered in an earlier draft — text

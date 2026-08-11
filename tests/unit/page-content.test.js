@@ -6,6 +6,7 @@ const require = createRequire(import.meta.url);
 const {
   EDITABLE_BY_TYPE, editableFieldsFor, isPlainBlocks, textToBlocks, blocksToText,
   shapeComponentEdit, pairZones, sameForFields, findPageZones,
+  CTA_SLOTS, ctaSlotsFor, shapeCtaEdit, CMPS_TABLE,
 } = require('../../src/api/chapter-admin/services/page-content.js');
 const { BadInputError } = require('../../src/api/chapter-admin/services/fields.js');
 
@@ -359,5 +360,89 @@ describe('findPageZones', () => {
       __slug: 'aloha-hawaii',
       published: { documentId: 'pg1', components: [cmp('shared.hero', 4)] },
     }), 'aloha-hawaii')).toEqual({ error: 'no-home-page' });
+  });
+});
+
+describe('ctaSlotsFor', () => {
+  it('names the CTA slots each component type carries', () => {
+    expect(ctaSlotsFor('shared.hero')).toEqual(['primaryCta', 'secondaryCta']);
+    expect(ctaSlotsFor('shared.section')).toEqual(['primaryCta', 'secondaryCta']);
+    expect(ctaSlotsFor('shared.upcoming-events')).toEqual(['link']);
+    expect(ctaSlotsFor('shared.member-group')).toEqual(['link']);
+    expect(ctaSlotsFor('shared.news-and-resources')).toEqual(['link']);
+  });
+
+  it('does NOT offer a slot for partner-callout, which has no renderer', () => {
+    // Its schema has a `link`, but PageBody never dispatches it and
+    // toPartnershipProps never forwards a cta — the button would be editable
+    // and invisible.
+    expect(ctaSlotsFor('shared.partner-callout')).toEqual([]);
+  });
+
+  it('returns none for a component with no CTA', () => {
+    // A slot list that guessed wrong would make the screen offer a button
+    // editor for something that has no button.
+    for (const t of ['shared.gallery', 'shared.contact-form', 'shared.partner-group',
+                     'shared.video-embed', 'shared.social-media-feed']) {
+      expect(ctaSlotsFor(t), t).toEqual([]);
+    }
+  });
+
+  it('returns none for a type it does not know', () => {
+    expect(ctaSlotsFor('shared.brand-new-thing')).toEqual([]);
+  });
+});
+
+describe('shapeCtaEdit', () => {
+  it('keeps a label and a normalised href', () => {
+    expect(shapeCtaEdit({ label: '  Join Us  ', href: '/join' }))
+      .toEqual({ label: 'Join Us', href: '/join' });
+  });
+
+  it('absolutises an off-site href', () => {
+    expect(shapeCtaEdit({ label: 'X', href: '//evil.example/x' }).href)
+      .toBe('https://evil.example/x');
+  });
+
+  it('400s an unsafe href rather than storing it', () => {
+    // Both fields are `required: true` on the component, so there is no
+    // "clear it" path — refusing is the only correct answer.
+    expect(() => shapeCtaEdit({ label: 'X', href: 'javascript:alert(1)' }))
+      .toThrow(BadInputError);
+  });
+
+  it('400s an empty label or href, which the schema requires', () => {
+    expect(() => shapeCtaEdit({ label: '', href: '/join' })).toThrow(BadInputError);
+    expect(() => shapeCtaEdit({ label: 'X', href: '   ' })).toThrow(BadInputError);
+  });
+
+  it('400s a label longer than the cap', () => {
+    expect(() => shapeCtaEdit({ label: 'x'.repeat(201), href: '/join' }))
+      .toThrow(BadInputError);
+  });
+
+  it('DROPS style, which is design rather than content', () => {
+    expect(shapeCtaEdit({ label: 'X', href: '/join', style: 'Primary' }))
+      .not.toHaveProperty('style');
+  });
+
+  it('400s a non-string value', () => {
+    expect(() => shapeCtaEdit({ label: { a: 1 }, href: '/join' })).toThrow(BadInputError);
+  });
+
+  it('requires both fields together', () => {
+    // A partial write would leave a button with a stale label and a new href.
+    expect(() => shapeCtaEdit({ label: 'X' })).toThrow(BadInputError);
+    expect(() => shapeCtaEdit({ href: '/join' })).toThrow(BadInputError);
+  });
+});
+
+describe('CMPS_TABLE', () => {
+  it('has a join table for every type that declares a CTA slot', () => {
+    // Without this, a component gaining a slot without a table entry shows no
+    // buttons and saves nothing — silently, with a 200. `ctaIn` returns null
+    // for an unknown table and `getPage` filters nulls, so the runtime failure
+    // is invisible. This test is the only loud one.
+    expect(Object.keys(CMPS_TABLE).sort()).toEqual(Object.keys(CTA_SLOTS).sort());
   });
 });

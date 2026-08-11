@@ -238,8 +238,95 @@ async function findPageZones(strapiInstance, chapterSlug) {
   return { pageDocumentId: draft.documentId, pairs: paired, structureDiverged: false };
 }
 
+const { normaliseUrl } = require('./safe-url');
+
+const MAX_LABEL_LEN = 200;
+
+/**
+ * Which `shared.cta` slots each component type carries.
+ *
+ * The slot NAMES differ by parent — `primaryCta`/`secondaryCta` on hero and
+ * section, `link` everywhere else — and they are the `field` column of the
+ * parent's `_cmps` join table, so getting one wrong silently edits nothing.
+ */
+const CTA_SLOTS = {
+  'shared.hero': ['primaryCta', 'secondaryCta'],
+  'shared.section': ['primaryCta', 'secondaryCta'],
+  'shared.upcoming-events': ['link'],
+  'shared.member-group': ['link'],
+  'shared.news-and-resources': ['link'],
+  // NO 'shared.partner-callout'. It has a `link` in its schema and NO RENDERER:
+  // PageBody dispatches partner-GROUP to Partnership.astro and lets
+  // partner-callout fall through to null. Zero rows exist in any zone. An
+  // editable button on a component that never appears is a screen that lies.
+};
+
+const ctaSlotsFor = (type) => CTA_SLOTS[type] ?? [];
+
+/**
+ * Submitted values -> the data written to one `shared.cta` row.
+ *
+ * `label` and `href` are both `required: true` on the component, so unlike the
+ * text fields there is no legitimate "clear it" — a blank is a 400, not an
+ * empty string. `style` is deliberately not editable: Primary and Secondary
+ * render differently by design, and that is a national decision.
+ */
+function shapeCtaEdit(input) {
+  for (const field of ['label', 'href']) {
+    const raw = input?.[field];
+    if (raw === undefined) throw new BadInputError(`${field} is required`);
+    if (raw !== null && typeof raw === 'object') throw new BadInputError(`${field} must be text`);
+  }
+
+  const label = String(input.label ?? '').trim();
+  if (label === '') throw new BadInputError('Button text is required');
+  if (label.length > MAX_LABEL_LEN) throw new BadInputError('Button text is too long');
+
+  const href = normaliseUrl(input.href);
+  if (href === null) throw new BadInputError('That link is not a valid web address');
+
+  return { label, href };
+}
+
+/**
+ * The join table that carries a component's nested components.
+ *
+ * AN EXPLICIT MAP, NOT A DERIVATION. The obvious string transform
+ * (`replace('shared.','shared_')` + `'s_cmps'`) is wrong for every entry that
+ * matters: `shared.hero` yields `components_shared_heros_cmps` where the real
+ * table is `..._heroes_cmps`, and `shared.upcoming-events` yields a doubled
+ * `...eventss_cmps`. English pluralisation is not a string transform.
+ *
+ * This matters more than a typo: a wrong table name returns NO ROWS. The read
+ * shows no buttons and the write edits nothing — silently, with a 200.
+ */
+const CMPS_TABLE = {
+  'shared.hero': 'components_shared_heroes_cmps',
+  'shared.section': 'components_shared_sections_cmps',
+  'shared.upcoming-events': 'components_shared_upcoming_events_cmps',
+  'shared.member-group': 'components_shared_member_groups_cmps',
+  'shared.news-and-resources': 'components_shared_news_and_resources_cmps',
+};
+
+/**
+ * Single-media slots a chapter admin may replace.
+ *
+ * `gallery.photos` is deliberately absent: a repeatable list needs
+ * add/remove/reorder, which is a different screen. `figure` is the one a
+ * visitor actually looks at — every chapter hero is currently the same
+ * placeholder.
+ */
+const MEDIA_SLOTS = {
+  'shared.hero': 'figure',
+  'shared.section': 'figure',
+  'shared.partner-callout': 'figure',
+};
+
+const mediaSlotFor = (type) => MEDIA_SLOTS[type] ?? null;
+
 module.exports = {
   EDITABLE_BY_TYPE, editableFieldsFor, isPlainBlocks, textToBlocks, blocksToText,
   shapeComponentEdit, pairZones, sameForFields, findPageZones,
+  CTA_SLOTS, ctaSlotsFor, shapeCtaEdit, CMPS_TABLE, MEDIA_SLOTS, mediaSlotFor,
   MAX_BODY_LEN, MAX_TEXT_LEN,
 };

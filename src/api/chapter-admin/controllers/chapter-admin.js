@@ -18,7 +18,7 @@ const {
 } = require('../services/partners');
 const {
   editableFieldsFor, isPlainBlocks, shapeComponentEdit, findPageZones,
-  blocksToText, sameForFields,
+  blocksToText, sameForFields, ctaSlotsFor, shapeCtaEdit, CMPS_TABLE, mediaSlotFor,
 } = require('../services/page-content');
 
 // Mirrors api::event.event minus `chapter` and `slug`, both set at create and
@@ -102,6 +102,17 @@ async function resolveScopedChapter(ctx, rawSlug) {
 
   assertChapterScope(administered, chapter.documentId);
   return { chapter };
+}
+
+/** The `shared.cta` row in one slot of one component, at one status. */
+async function ctaIn(strapiInstance, parentType, parentId, slot) {
+  const table = CMPS_TABLE[parentType];
+  if (!table) return null;
+  const row = await strapiInstance.db.connection(table)
+    .where({ entity_id: parentId, component_type: 'shared.cta', field: slot })
+    .first();
+  if (!row) return null;
+  return strapiInstance.db.query('shared.cta').findOne({ where: { id: row.cmp_id } });
 }
 
 module.exports = {
@@ -334,7 +345,11 @@ module.exports = {
     const sections = [];
     for (const pair of found.pairs) {
       const fields = editableFieldsFor(pair.type);
-      const row = await strapi.db.query(pair.type).findOne({ where: { id: pair.draftId } });
+      const slot = mediaSlotFor(pair.type);
+      const row = await strapi.db.query(pair.type).findOne({
+        where: { id: pair.draftId },
+        ...(slot ? { populate: { [slot]: true } } : {}),
+      });
 
       // `body` is editable only when a plain textarea can round-trip it.
       // blocksToPlainText flattens headings, lists and links, so offering a
@@ -352,6 +367,11 @@ module.exports = {
           editable.length === 0 ? 'not-editable' : bodyIsRich ? 'rich-body' : null,
         values: Object.fromEntries(
           editable.map((f) => [f, f === 'body' ? blocksToText(row?.body) : (row?.[f] ?? '')])),
+        ctas: await Promise.all(ctaSlotsFor(pair.type).map(async (ctaSlot) => {
+          const cta = await ctaIn(strapi, pair.type, pair.draftId, ctaSlot);
+          return cta ? { slot: ctaSlot, label: cta.label ?? '', href: cta.href ?? '' } : null;
+        })).then((list) => list.filter(Boolean)),
+        image: slot ? { slot, url: row?.[slot]?.url ?? null } : null,
       });
     }
 
@@ -406,12 +426,108 @@ module.exports = {
         'That section now contains formatting this editor would remove. Reload the page.');
     }
 
-    let data;
+    // --- text --------------------------------------------------------------
+    // `shapeComponentEdit` THROWS when no whitelisted text field is present.
+    // That is correct for plan 5, where text was the only thing a save could
+    // carry — but a buttons-only or image-only payload has none, and without
+    // this the CTA and image code below is unreachable. Verified: every
+    // cta-only save returned `400 Nothing editable was submitted`, three of
+    // this plan's own tests failed, and four more passed against a guard that
+    // never reached the code they name.
+    const hasExtras = Boolean(input.ctas) || input.figureId !== undefined;
+    let data = {};
     try {
       data = shapeComponentEdit(input, pair.type);
     } catch (err) {
-      if (err instanceof BadInputError) return ctx.badRequest(err.message);
-      throw err;
+      if (!(err instanceof BadInputError)) throw err;
+      // Only tolerable when the save is carrying something else.
+      if (!hasExtras || err.message !== 'Nothing editable was submitted') {
+        return ctx.badRequest(err.message);
+      }
+    }
+
+    // --- buttons -----------------------------------------------------------
+    // Each CTA is its own component row, reached through the parent's slot.
+    // Same both-statuses write and same parity gate as the text fields: a
+    // published CTA that already differs from its draft is an unpublished
+    // national edit, and writing it would publish something nobody approved.
+    //
+    // VALIDATE EVERYTHING BEFORE WRITING ANYTHING. A save carries text, buttons
+    // and an image together, and each can fail on its own. Interleaving the
+    // checks with the writes means a payload whose SECOND button is malformed
+    // has already stored the first when the 400 goes out — the admin sees a
+    // failure, reloads, and finds half their edit applied.
+    const ctaPlan = [];
+    for (const [slot, raw] of Object.entries(input.ctas ?? {})) {
+      if (!ctaSlotsFor(pair.type).includes(slot)) {
+        return ctx.badRequest('No such button on this section');
+      }
+      let ctaData;
+      try {
+        ctaData = shapeCtaEdit(raw);
+      } catch (err) {
+        if (err instanceof BadInputError) return ctx.badRequest(err.message);
+        throw err;
+      }
+
+      const draftCta = await ctaIn(strapi, pair.type, pair.draftId, slot);
+      if (!draftCta) return ctx.notFound('That button no longer exists');
+
+      const pubCta = pair.publishedId
+        ? await ctaIn(strapi, pair.type, pair.publishedId, slot) : null;
+      const writeBoth = Boolean(pubCta) && sameForFields(draftCta, pubCta, Object.keys(ctaData));
+
+      ctaPlan.push({ slot, ctaData, draftCta, pubCta, writeBoth });
+    }
+
+    // --- image -------------------------------------------------------------
+    // `figureId` is a media id the /chapter-admin/media endpoint already
+    // returned; that endpoint owns the magic-byte sniffing and the size cap, so
+    // there is nothing to re-validate here beyond "is it a number".
+    //
+    // The image gets its OWN parity check, on the figure — not the text's.
+    //
+    // Neither of the obvious readings works, and an earlier draft asserted all
+    // four of them in different places. `sameForFields(row, pubRow,
+    // Object.keys(data))` is VACUOUS on an image-only save: `data` is `{}`, so
+    // it compares zero fields and returns true. Measured on aloha's hero, whose
+    // two statuses are demonstrably diverged, an image-only save changed the
+    // PUBLISHED figure and reported 200.
+    //
+    // Reusing the text's gated `publishedId` is wrong the other way: a diverged
+    // heading has nothing to do with the image, and holding the image back
+    // because of it makes walkthrough row 4 false.
+    //
+    // So: compare the figures. Same file on both => they are in step, write
+    // both. Different => someone changed one without the other, and publishing
+    // is not ours to do.
+    const slotName = mediaSlotFor(pair.type);
+    let figureId = null;
+    let imageTargets = [];
+    if (input.figureId !== undefined && input.figureId !== null) {
+      if (!slotName) return ctx.badRequest('This section has no image');
+      // A string is legitimate — the form posts one — but it must be a whole
+      // positive number.
+      figureId = Number(input.figureId);
+      if (!Number.isInteger(figureId) || figureId <= 0) {
+        return ctx.badRequest('That image could not be attached');
+      }
+
+      imageTargets = [pair.draftId];
+      if (pair.publishedId) {
+        const [draftFig, pubFig] = await Promise.all([
+          strapi.db.query(pair.type).findOne({
+            where: { id: pair.draftId }, populate: { [slotName]: true } }),
+          strapi.db.query(pair.type).findOne({
+            where: { id: pair.publishedId }, populate: { [slotName]: true } }),
+        ]);
+        // Compare the FILE, not the row: files_related_mph is delete+insert, so
+        // the join row's own id churns on every re-attach and comparing it
+        // would report divergence after any earlier save.
+        if ((draftFig?.[slotName]?.id ?? null) === (pubFig?.[slotName]?.id ?? null)) {
+          imageTargets.push(pair.publishedId);
+        }
+      }
     }
 
     // CONTENT PARITY gates the published write.
@@ -441,17 +557,39 @@ module.exports = {
       skipReason = found.structureDiverged ? 'structure-diverged' : 'never-published';
     }
 
-    const targets = [pair.draftId, publishedId].filter((id) => id !== null);
+    // Empty when the save carries only buttons or only an image.
+    const targets = Object.keys(data).length === 0
+      ? [] : [pair.draftId, publishedId].filter((id) => id !== null);
+
+    // --- everything is valid; write ----------------------------------------
     for (const id of targets) {
       await strapi.db.query(pair.type).update({ where: { id }, data });
     }
+    for (const c of ctaPlan) {
+      await strapi.db.query('shared.cta').update({ where: { id: c.draftCta.id }, data: c.ctaData });
+      if (c.writeBoth) {
+        await strapi.db.query('shared.cta').update({ where: { id: c.pubCta.id }, data: c.ctaData });
+      }
+    }
+    for (const id of imageTargets) {
+      await strapi.db.query(pair.type).update({ where: { id }, data: { [slotName]: figureId } });
+    }
+
+    const facets = [];
+    if (Object.keys(data).length > 0) facets.push({ kind: 'text', wrote: targets.length });
+    for (const c of ctaPlan) facets.push({ kind: 'button', slot: c.slot, wrote: c.writeBoth ? 2 : 1 });
+    if (imageTargets.length > 0) facets.push({ kind: 'image', wrote: imageTargets.length });
+
+    const live = facets.filter((f) => f.wrote === 2).length;
+    const held = facets.filter((f) => f.wrote < 2).length;
 
     ctx.body = {
-      data: { index, type: pair.type, wrote: targets.length },
-      // `skipReason` distinguishes the three ways a save reaches the draft only.
-      // The screen must say WHICH — "contact national to publish" is wrong
-      // advice for a page that has simply never been published.
-      meta: { structureDiverged: found.structureDiverged, skipReason },
+      data: { index, type: pair.type, facets, live, held },
+      meta: {
+        structureDiverged: found.structureDiverged,
+        // Only when something was actually held back.
+        skipReason: held > 0 ? (skipReason ?? 'content-diverged') : null,
+      },
     };
   }),
 };
