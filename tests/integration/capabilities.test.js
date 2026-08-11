@@ -6,6 +6,12 @@ import { boot, shutdown } from './helpers.js';
 // rather than fighting ESM interop for a namespace that has no default export.
 const require = createRequire(import.meta.url);
 
+// Every other integration file suffixes the accounts it creates with a run
+// stamp, and for a reason: `username` and `email` are unique, so a fixed
+// address turns any mid-run failure into a permanent unique-constraint failure
+// on every later run. Same pattern here.
+const RUN = Date.now();
+
 let strapi;
 beforeAll(async () => { strapi = await boot(); });
 afterAll(shutdown);
@@ -49,7 +55,7 @@ describe('User.capabilities', () => {
     expect(caps).toHaveLength(2);
 
     const user = await strapi.plugin('users-permissions').service('user').add({
-      username: 'multicap@areaa.test', email: 'multicap@areaa.test',
+      username: `multicap-${RUN}@areaa.test`, email: `multicap-${RUN}@areaa.test`,
       password: 'Password123!', confirmed: true, provider: 'local',
       firstName: 'Multi', lastName: 'Cap',
       capabilities: caps.map((c) => c.id),
@@ -68,6 +74,36 @@ describe('User.capabilities', () => {
   });
 });
 
+describe('backfill', () => {
+  it('gives every chapter_admin-role user the chapter_admin capability', async () => {
+    const users = await strapi.query('plugin::users-permissions.user').findMany({
+      where: { role: { type: 'chapter_admin' } },
+      populate: { capabilities: true },
+    });
+    expect(users.length).toBeGreaterThan(0);
+    for (const u of users) {
+      expect(u.capabilities.map((c) => c.slug)).toContain('chapter_admin');
+    }
+  });
+
+  it('gives ordinary members nothing — Authenticated is a baseline, not a capability', async () => {
+    const users = await strapi.query('plugin::users-permissions.user').findMany({
+      where: { role: { type: 'authenticated' } },
+      populate: { capabilities: true },
+    });
+    expect(users.length).toBeGreaterThan(0);
+    for (const u of users) {
+      expect(u.capabilities).toHaveLength(0);
+    }
+  });
+
+  it('is idempotent — a second run adds no duplicate link', async () => {
+    const { backfillCapabilities } = require('../../src/api/member-capability/seed.js');
+    const added = await backfillCapabilities(strapi);
+    expect(added).toBe(0);
+  });
+});
+
 describe('Committee Leader scope', () => {
   it('links a leader to committees by documentId, both ways', async () => {
     // status:'draft' is not decoration. `committee` is draft-and-publish, so
@@ -78,7 +114,7 @@ describe('Committee Leader scope', () => {
     expect(committees).toHaveLength(1);
 
     const user = await strapi.plugin('users-permissions').service('user').add({
-      username: 'leader@areaa.test', email: 'leader@areaa.test',
+      username: `leader-${RUN}@areaa.test`, email: `leader-${RUN}@areaa.test`,
       password: 'Password123!', confirmed: true, provider: 'local',
       firstName: 'Lead', lastName: 'Er',
       ledCommittees: [committees[0].id],
@@ -97,7 +133,7 @@ describe('Committee Leader scope', () => {
       documentId: committees[0].documentId, status: 'draft',
       populate: { leaders: { fields: ['username'] } },
     });
-    expect(back.leaders.map((u) => u.username)).toContain('leader@areaa.test');
+    expect(back.leaders.map((u) => u.username)).toContain(`leader-${RUN}@areaa.test`);
 
     await strapi.documents('plugin::users-permissions.user')
       .delete({ documentId: user.documentId });

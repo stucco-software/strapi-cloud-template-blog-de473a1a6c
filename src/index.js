@@ -3,7 +3,9 @@
 const {
   AUTHENTICATED_GRANTS, CHAPTER_ADMIN_GRANTS, PUBLIC_GRANTS,
 } = require('./api/chapter-admin/grants');
-const { seedCapabilities } = require('./api/member-capability/seed');
+const {
+  seedCapabilities, backfillCapabilities,
+} = require('./api/member-capability/seed');
 
 // Chapter admins are ordinary up_users with an elevated role — never Strapi
 // admin-panel seats, which are billed per user. `user.role` is manyToOne, so a
@@ -68,5 +70,10 @@ module.exports = {
       .query('plugin::users-permissions.role')
       .findOne({ where: { type: 'public' } });
     if (publicRole) await grant(strapi, publicRole.id, PUBLIC_GRANTS);
+
+    // Last, because it reads role.type and the roles must exist by now. Every
+    // existing admin ends up holding the capability matching the role they
+    // already had, so the capability model changes nothing on day one.
+    await backfillCapabilities(strapi);
   },
 };

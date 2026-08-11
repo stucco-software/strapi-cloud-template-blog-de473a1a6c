@@ -97,6 +97,10 @@ PATH="$PATH:/opt/homebrew/bin" npx vitest run
 
 Also: **`sqlite3` is not at `/opt/homebrew/bin/sqlite3`** on this machine. It is at `/opt/homebrew/opt/sqlite/bin/sqlite3` (the keg-only install; `/usr/bin/sqlite3` is Apple's and also works). Use the full path in every DB check below.
 
+**3a. Never run two vitest invocations at once.** `vitest.config.js` sets `fileParallelism: false` because the integration tests boot a real Strapi against one SQLite file. That protects a *single* run; it does nothing about two runs racing each other. Two concurrent invocations take the suite from ~16s to ~1000s and start tripping the 60s `hookTimeout`, which surfaces as file-level `FAIL` with no assertion message — a failure that reads like a code bug and is not one. If a run appears to hang, check for a backgrounded earlier run before touching any source.
+
+**3b. Run-stamp every account a test creates.** Every existing integration file suffixes usernames with `const RUN = Date.now()`. Follow it. `up_users.username` is *not* unique at the database level despite the schema saying so, so a fixed address does not fail loudly — it silently accumulates duplicate rows on every failed run, and those rows then poison later runs' assertions. Clean leaked accounts through Strapi (`strapi.query(...).delete`), never raw SQL, or the join-table rows survive.
+
 **4. Baselines, measured immediately before writing this plan.**
 
 | | Test files | Tests |

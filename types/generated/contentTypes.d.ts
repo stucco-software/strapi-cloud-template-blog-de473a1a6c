@@ -682,6 +682,43 @@ export interface ApiGlobalGlobal extends Struct.SingleTypeSchema {
   };
 }
 
+export interface ApiMemberCapabilityMemberCapability
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'member_capabilities';
+  info: {
+    description: 'A unit of authority a member may hold. Additive: a user may hold any number, and their grants are the union. Scope is held separately, on the user.';
+    displayName: 'Member Capability';
+    pluralName: 'member-capabilities';
+    singularName: 'member-capability';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    categories: Schema.Attribute.JSON;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    description: Schema.Attribute.Text;
+    holders: Schema.Attribute.Relation<
+      'manyToMany',
+      'plugin::users-permissions.user'
+    >;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::member-capability.member-capability'
+    > &
+      Schema.Attribute.Private;
+    name: Schema.Attribute.String & Schema.Attribute.Required;
+    publishedAt: Schema.Attribute.DateTime;
+    slug: Schema.Attribute.UID<'name'> & Schema.Attribute.Required;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
 export interface ApiNewsItemNewsItem extends Struct.CollectionTypeSchema {
   collectionName: 'news_items';
   info: {
@@ -1419,6 +1456,7 @@ declare module '@strapi/strapi' {
       'api::footer.footer': ApiFooterFooter;
       'api::form-submission.form-submission': ApiFormSubmissionFormSubmission;
       'api::global.global': ApiGlobalGlobal;
+      'api::member-capability.member-capability': ApiMemberCapabilityMemberCapability;
       'api::news-item.news-item': ApiNewsItemNewsItem;
       'api::page.page': ApiPagePage;
       'api::partner.partner': ApiPartnerPartner;
