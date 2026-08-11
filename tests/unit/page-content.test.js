@@ -258,9 +258,9 @@ describe('pairZones', () => {
     const d = zone(['shared.hero', 'shared.member-group', 'shared.member-group']);
     const p = d.map((c) => ({ ...c, id: c.id + 50 }));
     expect(pairZones(d, p)).toEqual([
-      { draftId: 100, publishedId: 150, type: 'shared.hero', index: 0 },
-      { draftId: 101, publishedId: 151, type: 'shared.member-group', index: 1 },
-      { draftId: 102, publishedId: 152, type: 'shared.member-group', index: 2 },
+      { draftId: 100, publishedId: 150, type: 'shared.hero', index: 0, ambiguous: false },
+      { draftId: 101, publishedId: 151, type: 'shared.member-group', index: 1, ambiguous: true },
+      { draftId: 102, publishedId: 152, type: 'shared.member-group', index: 2, ambiguous: true },
     ]);
   });
 
@@ -275,12 +275,34 @@ describe('pairZones', () => {
     expect(pairZones(zone(['shared.hero', 'shared.section']), zone(['shared.hero']))).toBeNull();
   });
 
+  it('flags a pair as ambiguous ONLY when its type repeats in the zone', () => {
+    // This is what the content-parity gate is really for. Position pairing can
+    // only put one component's text into another when the zone holds MORE THAN
+    // ONE of that type — with a single hero, position 0 in the draft and
+    // position 0 in published are provably the same component.
+    //
+    // Gating the unique types too made them permanently uneditable: the gate
+    // compares draft against published, an admin's save only ever reaches the
+    // draft, so the two diverge on the first save and never converge again.
+    // Measured on aloha's hero — every later save returned
+    // `saved=draft&why=content-diverged` and the live page never changed.
+    const d = zone(['shared.hero', 'shared.member-group', 'shared.member-group']);
+    const p = d.map((c) => ({ ...c, id: c.id + 50 }));
+    expect(pairZones(d, p).map((x) => x.ambiguous)).toEqual([false, true, true]);
+  });
+
+  it('flags nothing ambiguous when there is no published zone', () => {
+    // Nothing to mispair against.
+    const d = zone(['shared.member-group', 'shared.member-group']);
+    expect(pairZones(d, null).map((x) => x.ambiguous)).toEqual([false, false]);
+  });
+
   it('pairs the draft alone when there is no published zone', () => {
     // A page that has never been published is legitimate; draft-only writes
     // are correct there.
     const d = zone(['shared.hero']);
     expect(pairZones(d, null)).toEqual([
-      { draftId: 100, publishedId: null, type: 'shared.hero', index: 0 },
+      { draftId: 100, publishedId: null, type: 'shared.hero', index: 0, ambiguous: false },
     ]);
   });
 });
@@ -327,7 +349,7 @@ describe('findPageZones', () => {
       published: { documentId: 'pg1', components: [cmp('shared.hero', 4)] },
     }), 'aloha-hawaii');
     expect(res.pairs).toEqual([
-      { draftId: 3, publishedId: 4, type: 'shared.hero', index: 0 },
+      { draftId: 3, publishedId: 4, type: 'shared.hero', index: 0, ambiguous: false },
     ]);
     expect(res.structureDiverged).toBe(false);
   });

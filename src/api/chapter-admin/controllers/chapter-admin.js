@@ -475,7 +475,11 @@ module.exports = {
 
       const pubCta = pair.publishedId
         ? await ctaIn(strapi, pair.type, pair.publishedId, slot) : null;
-      const writeBoth = Boolean(pubCta) && sameForFields(draftCta, pubCta, Object.keys(ctaData));
+      // Same rule as the text: the parity check guards against MISPAIRING, and
+      // mispairing is only possible when the zone holds more than one component
+      // of this type. On a unique type it froze the button after one save.
+      const writeBoth = Boolean(pubCta)
+        && (!pair.ambiguous || sameForFields(draftCta, pubCta, Object.keys(ctaData)));
 
       ctaPlan.push({ slot, ctaData, draftCta, pubCta, writeBoth });
     }
@@ -524,7 +528,8 @@ module.exports = {
         // Compare the FILE, not the row: files_related_mph is delete+insert, so
         // the join row's own id churns on every re-attach and comparing it
         // would report divergence after any earlier save.
-        if ((draftFig?.[slotName]?.id ?? null) === (pubFig?.[slotName]?.id ?? null)) {
+        if (!pair.ambiguous
+            || (draftFig?.[slotName]?.id ?? null) === (pubFig?.[slotName]?.id ?? null)) {
           imageTargets.push(pair.publishedId);
         }
       }
@@ -547,13 +552,13 @@ module.exports = {
     // mispairing or an unpublished edit, and both mean hands off published.
     let publishedId = pair.publishedId;
     let skipReason = null;
-    if (publishedId !== null) {
+    if (publishedId !== null && pair.ambiguous) {
       const pubRow = await strapi.db.query(pair.type).findOne({ where: { id: publishedId } });
       if (!pubRow || !sameForFields(row, pubRow, Object.keys(data))) {
         publishedId = null;
         skipReason = 'content-diverged';
       }
-    } else {
+    } else if (publishedId === null) {
       skipReason = found.structureDiverged ? 'structure-diverged' : 'never-published';
     }
 

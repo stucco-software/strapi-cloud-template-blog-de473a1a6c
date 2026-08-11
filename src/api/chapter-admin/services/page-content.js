@@ -193,15 +193,33 @@ function pairZones(draft, published) {
   const d = draft ?? [];
   if (!published) {
     return d.map((c, index) => ({
-      draftId: c.id, publishedId: null, type: c.__component, index,
+      draftId: c.id, publishedId: null, type: c.__component, index, ambiguous: false,
     }));
   }
   if (published.length !== d.length) return null;
   for (let i = 0; i < d.length; i += 1) {
     if (d[i].__component !== published[i].__component) return null;
   }
+
+  // How many components of each type the zone holds. A type that appears ONCE
+  // can only pair one way: position 0 in the draft and position 0 in published
+  // are provably the same component, and no content comparison can tell us
+  // anything position has not already settled.
+  //
+  // This is what the content-parity gate is for, and the only case it is for.
+  // Applying it to unique types froze them: the gate compares draft against
+  // published, an admin's save only ever reaches the draft, so the first save
+  // diverges the two and every later save is refused for the divergence the
+  // first one caused. Measured on aloha's hero — permanently uneditable.
+  const counts = {};
+  for (const c of d) counts[c.__component] = (counts[c.__component] ?? 0) + 1;
+
   return d.map((c, index) => ({
-    draftId: c.id, publishedId: published[index].id, type: c.__component, index,
+    draftId: c.id,
+    publishedId: published[index].id,
+    type: c.__component,
+    index,
+    ambiguous: counts[c.__component] > 1,
   }));
 }
 

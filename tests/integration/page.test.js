@@ -374,22 +374,32 @@ describe('PUT /api/chapter-admin/page', () => {
     expect(res.status).toBe(403);
   });
 
-  it('SKIPS the published write when that row has diverged, and says so', async () => {
-    // The plan's central safety property, and the first version proved it
-    // nowhere: draftChapters yields two fully-published chapters, so `wrote`
-    // was always 2 and the only assertion was toBe(2).
+  it('SKIPS the published write when a REPEATED type has diverged, and says so', async () => {
+    // The safety property, narrowed to the case that actually needs it.
     //
-    // Real data already contains this state — aloha's draft hero title differs
-    // from its published one — but construct it explicitly so the test does not
-    // depend on which chapters draftChapters happens to return.
-    const s = firstOfType('shared.section');
-    const rows = (await zoneComponentRows()).filter((r) => r.component_type === 'shared.section');
-    expect(rows.length).toBe(2);
-    const [draftRow, pubRow] = rows;
-    const pubBefore = await strapi.db.query('shared.section').findOne({ where: { id: pubRow.cmp_id } });
+    // This used to run on `shared.section`, which appears ONCE in the zone, and
+    // it was asserting a bug: on a unique type the gate compares draft against
+    // published, an admin's save only ever reached the draft, so the first save
+    // diverged the two and froze the component forever. aloha's hero was
+    // permanently uneditable and this test called that correct.
+    //
+    // Mispairing — the thing the gate exists to stop — is only possible when
+    // the zone holds more than one component of the type, so that is where it
+    // still applies. See the 'diverged unique component' describe below.
+    const s = sections.filter((x) => x.type === 'shared.member-group')[0];
+    const rows = (await zoneComponentRows())
+      .filter((r) => r.component_type === 'shared.member-group');
+    expect(rows.length).toBeGreaterThan(2);
+    // rows is ordered by (entity_id, order): the draft page's groups first,
+    // then the published page's. Take the FIRST of each page, which is the
+    // pair `sections[...]` above addresses.
+    const draftRow = rows[0];
+    const pubRow = rows[rows.length / 2];
+    const pubBefore = await strapi.db.query('shared.member-group')
+      .findOne({ where: { id: pubRow.cmp_id } });
 
     // Make published differ from draft, as an unpublished national edit would.
-    await strapi.db.query('shared.section')
+    await strapi.db.query('shared.member-group')
       .update({ where: { id: pubRow.cmp_id }, data: { title: `Diverged ${RUN}` } });
     try {
       const res = await save({ index: s.index, title: `Attempt ${RUN}` });
@@ -398,15 +408,15 @@ describe('PUT /api/chapter-admin/page', () => {
       expect(res.body.data.held).toBe(1);
       expect(res.body.meta.skipReason).toBe('content-diverged');
 
-      const draftAfter = await strapi.db.query('shared.section')
+      const draftAfter = await strapi.db.query('shared.member-group')
         .findOne({ where: { id: draftRow.cmp_id } });
-      const pubAfter = await strapi.db.query('shared.section')
+      const pubAfter = await strapi.db.query('shared.member-group')
         .findOne({ where: { id: pubRow.cmp_id } });
       expect(draftAfter.title).toBe(`Attempt ${RUN}`);
       // Untouched. Writing it would have PUBLISHED an edit nobody approved.
       expect(pubAfter.title).toBe(`Diverged ${RUN}`);
     } finally {
-      await strapi.db.query('shared.section')
+      await strapi.db.query('shared.member-group')
         .update({ where: { id: pubRow.cmp_id }, data: { title: pubBefore.title } });
     }
   });
@@ -548,11 +558,18 @@ describe('PUT /api/chapter-admin/page — image', () => {
     expect(sections.find((s) => s.type === 'shared.contact-form').image).toBeNull();
   });
 
-  it('holds the published image back when the two figures already differ', async () => {
-    // The vacuous-gate case. An image-only payload means `data` is {}, so a
-    // gate over Object.keys(data) compares nothing and returns true — measured
-    // changing a PUBLISHED figure on rows that were already diverged.
+  it('writes the image at BOTH statuses on a unique type, even when they differ', async () => {
+    // This used to assert the opposite, and the opposite was the bug: the hero
+    // appears ONCE in the zone, so position pairing cannot be wrong, and a gate
+    // that refuses the published write on a difference the admin's own previous
+    // save created froze the hero image after one upload.
+    //
+    // The image still gets its OWN comparison rather than borrowing the text's
+    // — a gate over Object.keys(data) is VACUOUS on an image-only save, since
+    // `data` is {} and comparing zero fields returns true — but that comparison
+    // now only decides anything for a REPEATED type.
     const hero = sections.find((x) => x.type === 'shared.hero');
+    expect(sections.filter((x) => x.type === 'shared.hero')).toHaveLength(1);
     const pubId = await publishedIdFor(hero.index);
     const files = await strapi.db.connection('files').orderBy('id').limit(2);
     expect(files.length).toBe(2);
@@ -565,11 +582,13 @@ describe('PUT /api/chapter-admin/page — image', () => {
 
     const res = await save({ index: hero.index, figureId: files[1].id });
     expect(res.status).toBe(200);
-    expect(res.body.data.facets.find((f) => f.kind === 'image').wrote).toBe(1);
+    expect(res.body.data.facets.find((f) => f.kind === 'image').wrote).toBe(2);
 
-    const pubRow = await strapi.db.connection('files_related_mph')
-      .where({ related_id: pubId, related_type: 'shared.hero', field: 'figure' }).first();
-    expect(pubRow.file_id).toBe(files[1].id);   // untouched
+    for (const id of [hero.draftId, pubId]) {
+      const linked = await strapi.db.connection('files_related_mph')
+        .where({ related_id: id, related_type: 'shared.hero', field: 'figure' }).first();
+      expect(linked.file_id).toBe(files[1].id);
+    }
   });
 
   it('attaches an uploaded image at both statuses when they are in step', async () => {
@@ -619,5 +638,63 @@ describe('PUT /api/chapter-admin/page — image', () => {
     const contact = sections.find((s) => s.type === 'shared.contact-form');
     const file = await strapi.db.connection('files').first();
     expect((await save({ index: contact.index, figureId: file.id })).status).toBe(400);
+  });
+});
+
+describe('PUT /api/chapter-admin/page — a diverged unique component is still editable', () => {
+  it('writes BOTH statuses on a unique type even when the two rows differ', async () => {
+    // The bug this exists to stop coming back.
+    //
+    // The content-parity gate compares draft against published. A chapter
+    // admin's save only ever reached the draft when it fired, so the FIRST
+    // save diverged the two and every save after it was refused for the
+    // divergence the first one caused. aloha's hero was permanently frozen:
+    // `saved=draft&why=content-diverged` forever, live page never changing.
+    //
+    // The gate guards against MISPAIRING, and a zone with exactly one hero
+    // cannot mispair — position 0 in the draft and position 0 in published are
+    // the same component by construction.
+    const hero = sections.find((s) => s.type === 'shared.hero');
+    expect(sections.filter((s) => s.type === 'shared.hero')).toHaveLength(1);
+    const pubId = await publishedIdFor(hero.index);
+
+    // Diverge them deliberately, exactly as an unpublished national edit would.
+    await strapi.db.query('shared.hero')
+      .update({ where: { id: pubId }, data: { title: 'Published Title' } });
+    await strapi.db.query('shared.hero')
+      .update({ where: { id: hero.draftId }, data: { title: 'Diverged Draft' } });
+
+    const res = await save({ index: hero.index, title: `Unfrozen ${RUN}` });
+    expect(res.status).toBe(200);
+    expect(res.body.data.held).toBe(0);
+    expect(res.body.meta.skipReason).toBeNull();
+
+    for (const id of [hero.draftId, pubId]) {
+      const row = await strapi.db.query('shared.hero').findOne({ where: { id } });
+      expect(row.title).toBe(`Unfrozen ${RUN}`);
+    }
+  });
+
+  it('STILL holds published back for a repeated type, where pairing can be wrong', async () => {
+    // aloha's zone has three member-groups. Position pairing across a same-type
+    // reorder produced a match that looked perfect and was wrong: an admin
+    // edited "Board of Directors" and the live site's "Executive Committee"
+    // heading changed. That is the case the gate is for, and it keeps it.
+    const groups = sections.filter((s) => s.type === 'shared.member-group');
+    expect(groups.length).toBeGreaterThan(1);
+    const g = groups[0];
+    const pubId = await publishedIdFor(g.index);
+
+    await strapi.db.query('shared.member-group')
+      .update({ where: { id: pubId }, data: { title: 'Published Group' } });
+    await strapi.db.query('shared.member-group')
+      .update({ where: { id: g.draftId }, data: { title: 'Diverged Group' } });
+
+    const res = await save({ index: g.index, title: `Held ${RUN}` });
+    expect(res.status).toBe(200);
+    expect(res.body.data.held).toBe(1);
+    expect(res.body.meta.skipReason).toBe('content-diverged');
+    expect((await strapi.db.query('shared.member-group')
+      .findOne({ where: { id: pubId } })).title).toBe('Published Group');
   });
 });
