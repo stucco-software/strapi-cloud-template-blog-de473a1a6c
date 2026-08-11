@@ -44,9 +44,8 @@ const PUBLIC_GRANTS = [
   'api::form-submission.form-submission.capture',
 ];
 
-const CHAPTER_ADMIN_GRANTS = [
-  ...AUTHENTICATED_GRANTS,
-
+// The chapter-authoring surface, scoped per chapter via administeredChapters.
+const CHAPTER_ADMIN_ACTIONS = [
   'api::chapter-admin.chapter-admin.getEvent',
   'api::chapter-admin.chapter-admin.listEvents',
   'api::chapter-admin.chapter-admin.createEvent',
@@ -79,4 +78,64 @@ const CHAPTER_ADMIN_GRANTS = [
   'api::chapter-admin.chapter-admin.updateSubmission',
 ];
 
-module.exports = { AUTHENTICATED_GRANTS, CHAPTER_ADMIN_GRANTS, PUBLIC_GRANTS };
+/**
+ * Actions each capability grants, keyed by capability slug.
+ *
+ * NO list here spreads another. That is the point of the whole change: with one
+ * role per user, a Chapter Admin who is also a Committee Leader needed a THIRD
+ * role re-listing both sets, and every later edit had to be applied to every
+ * combination containing it. Composition happens in grantsFor().
+ *
+ * The authenticated baseline is NOT repeated here — grantsFor() always adds it.
+ *
+ * national_admin and chapter_admin list the same actions today, and that is
+ * duplication of a different kind: two independent authority definitions that
+ * happen to coincide, and will diverge as soon as the National Admin portal
+ * adds national-only endpoints. Do NOT define one in terms of the other — that
+ * reintroduces exactly the coupling this change exists to remove.
+ */
+const CAPABILITY_GRANTS = {
+  // Unscoped by decision: a National Admin reaches every chapter.
+  national_admin: [...CHAPTER_ADMIN_ACTIONS],
+
+  // Scoped per committee via user.ledCommittees. No route grants these yet —
+  // the capability is holdable, scoped and tested, and the endpoints arrive
+  // with the committee-leader UI.
+  committee_leader: [
+    'api::chapter-admin.chapter-admin.getCommittee',
+    'api::chapter-admin.chapter-admin.listCommittees',
+    'api::chapter-admin.chapter-admin.createCommittee',
+    'api::chapter-admin.chapter-admin.updateCommittee',
+    'api::chapter-admin.chapter-admin.deleteCommittee',
+  ],
+
+  // Scoped per chapter via user.administeredChapters.
+  chapter_admin: [...CHAPTER_ADMIN_ACTIONS],
+};
+
+/**
+ * The union of the authenticated baseline and every held capability's grants.
+ *
+ * Union, never last-write: two capabilities compose, they do not shadow. An
+ * unrecognised slug grants nothing and does not throw — capabilities are
+ * authorable in the admin UI, so an unknown one is a routine state, and taking
+ * the boot down over it would be a worse failure than ignoring it. Sorted so
+ * the output is comparable.
+ */
+function grantsFor(capabilitySlugs) {
+  const out = new Set(AUTHENTICATED_GRANTS);
+  for (const slug of capabilitySlugs ?? []) {
+    for (const action of CAPABILITY_GRANTS[slug] ?? []) out.add(action);
+  }
+  return [...out].sort();
+}
+
+// Derived, not authored — the role still needs all 30 actions in the database
+// because it is still the coarse route gate. Exported under the old name so
+// src/index.js and tests/unit/grants.test.js keep working.
+const CHAPTER_ADMIN_GRANTS = grantsFor(['chapter_admin']);
+
+module.exports = {
+  AUTHENTICATED_GRANTS, CAPABILITY_GRANTS, CHAPTER_ADMIN_GRANTS,
+  PUBLIC_GRANTS, grantsFor,
+};
