@@ -74,9 +74,19 @@ class RateLimiter {
   }
 
   size() { return this.hits.size; }
+
+  /** Test affordance. One process-wide limiter means one suite exhausts it. */
+  reset() { this.hits.clear(); }
 }
 
+/**
+ * The one limiter the capture endpoint uses. Exported so a test suite can
+ * reset it: every request from supertest shares 127.0.0.1, so without this the
+ * fifth test exhausts the window and everything after it 429s.
+ */
+const captureLimiter = new RateLimiter();
+
 module.exports = {
-  isHoneypotTripped, isTooFast, RateLimiter,
+  isHoneypotTripped, isTooFast, RateLimiter, captureLimiter,
   HONEYPOT_FIELD, MIN_FILL_MS, RATE_LIMIT, RATE_WINDOW_MS,
 };

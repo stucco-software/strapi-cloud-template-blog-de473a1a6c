@@ -613,7 +613,15 @@ async function resolveForm(strapiInstance, pageDocumentId) {
 
   const page = await strapiInstance.documents('api::page.page').findOne({
     documentId: pageDocumentId,
-    populate: { chapter: { fields: ['slug'] }, components: { populate: { fields: true } } },
+    // Fragment API. `components` is a polymorphic dynamic zone, and Strapi 5
+    // rejects nested field-targeting inside one: "Invalid nested population
+    // query detected… its value must be '*'". `components: true` is accepted
+    // but leaves `fields` null, so the whitelist would be empty and every
+    // submission would 400. Verified all three shapes against a live page.
+    populate: {
+      chapter: { fields: ['slug'] },
+      components: { on: { 'shared.contact-form': { populate: { fields: true } } } },
+    },
     status: 'published',   // only a LIVE page can receive a submission
   });
   if (!page) return { error: 'no-such-page' };

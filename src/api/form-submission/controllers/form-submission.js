@@ -3,11 +3,10 @@
 const { createCoreController } = require('@strapi/strapi').factories;
 const { BadInputError } = require('../../chapter-admin/services/fields');
 const { shapeSubmission, NATIONAL_FIELDS } = require('../services/capture');
-const { isHoneypotTripped, isTooFast, RateLimiter } = require('../services/spam');
+const { isHoneypotTripped, isTooFast, captureLimiter } = require('../services/spam');
 
-// One limiter for the process lifetime. See the class comment for why in-memory
-// is a real limitation rather than a shortcut.
-const limiter = new RateLimiter();
+// One limiter for the process lifetime, shared from the service so tests can
+// reset it. See the class comment for why in-memory is a real limitation.
 
 /**
  * Resolve the form's field configuration AND its owning chapter from the page.
@@ -26,7 +25,15 @@ async function resolveForm(strapiInstance, pageDocumentId) {
 
   const page = await strapiInstance.documents('api::page.page').findOne({
     documentId: pageDocumentId,
-    populate: { chapter: { fields: ['slug'] }, components: { populate: { fields: true } } },
+    // Fragment API. `components` is a polymorphic dynamic zone, and Strapi 5
+    // rejects nested field-targeting inside one: "Invalid nested population
+    // query detected… its value must be '*'". `components: true` is accepted
+    // but leaves `fields` null, so the whitelist would be empty and every
+    // submission would 400. Verified all three shapes against a live page.
+    populate: {
+      chapter: { fields: ['slug'] },
+      components: { on: { 'shared.contact-form': { populate: { fields: true } } } },
+    },
     status: 'published',   // only a LIVE page can receive a submission
   });
   if (!page) return { error: 'no-such-page' };
@@ -54,7 +61,7 @@ module.exports = createCoreController('api::form-submission.form-submission', ({
     }
 
     const ip = ctx.request.ip;
-    if (!limiter.allow(ip, now)) {
+    if (!captureLimiter.allow(ip, now)) {
       ctx.status = 429;
       ctx.body = { error: { message: 'Too many messages. Please try again shortly.' } };
       return;
