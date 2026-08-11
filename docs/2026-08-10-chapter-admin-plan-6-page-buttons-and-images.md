@@ -828,7 +828,7 @@ Six hops, all of which Task 6 must specify:
   → expected undefined to be 1
 ```
 
-Update both to the facet shape in Task 3, not later — the "33 tests" gate in
+Update both to the facet shape in Task 3, not later — the "35 tests" gate in
 Task 5 is unreachable until they are:
 
 ```diff

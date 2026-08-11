@@ -477,7 +477,6 @@ export interface ApiChapterChapter extends Struct.CollectionTypeSchema {
     >;
     name: Schema.Attribute.String & Schema.Attribute.Required;
     pages: Schema.Attribute.Relation<'oneToMany', 'api::page.page'>;
-    partners: Schema.Attribute.Relation<'manyToMany', 'api::partner.partner'>;
     president: Schema.Attribute.Relation<
       'oneToOne',
       'plugin::users-permissions.user'
@@ -779,7 +778,6 @@ export interface ApiPartnerPartner extends Struct.CollectionTypeSchema {
     draftAndPublish: true;
   };
   attributes: {
-    chapters: Schema.Attribute.Relation<'manyToMany', 'api::chapter.chapter'>;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
