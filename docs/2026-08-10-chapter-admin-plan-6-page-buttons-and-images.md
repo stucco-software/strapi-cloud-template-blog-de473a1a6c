@@ -507,14 +507,30 @@ draft parent's slots, and pair each to the published parent's same slot:
 
 ```js
 /**
- * The `shared.cta` row in one slot of one component, at one status.
+ * The join table that carries a component's nested components.
  *
- * The join table is named after the PARENT (`components_shared_heroes_cmps`),
- * keyed by `entity_id` = the parent's id, with `field` = the slot name. A
- * mis-derived table name silently returns nothing rather than erroring.
+ * AN EXPLICIT MAP, NOT A DERIVATION. The obvious string transform
+ * (`replace('shared.','shared_')` + `'s_cmps'`) is wrong for every entry that
+ * matters: `shared.hero` yields `components_shared_heros_cmps` where the real
+ * table is `..._heroes_cmps`, and `shared.upcoming-events` yields a doubled
+ * `...eventss_cmps`. English pluralisation is not a string transform.
+ *
+ * This matters more than a typo: a wrong table name returns NO ROWS. The read
+ * shows no buttons and the write edits nothing — silently, with a 200.
  */
+const CMPS_TABLE = {
+  'shared.hero': 'components_shared_heroes_cmps',
+  'shared.section': 'components_shared_sections_cmps',
+  'shared.partner-callout': 'components_shared_partner_callouts_cmps',
+  'shared.upcoming-events': 'components_shared_upcoming_events_cmps',
+  'shared.member-group': 'components_shared_member_groups_cmps',
+  'shared.news-and-resources': 'components_shared_news_and_resources_cmps',
+};
+
+/** The `shared.cta` row in one slot of one component, at one status. */
 async function ctaIn(strapiInstance, parentType, parentId, slot) {
-  const table = `components_${parentType.replace('shared.', 'shared_').replace(/-/g, '_')}s_cmps`;
+  const table = CMPS_TABLE[parentType];
+  if (!table) return null;
   const row = await strapiInstance.db.connection(table)
     .where({ entity_id: parentId, component_type: 'shared.cta', field: slot })
     .first();
@@ -523,10 +539,11 @@ async function ctaIn(strapiInstance, parentType, parentId, slot) {
 }
 ```
 
-**Derive the table name once and assert it**, rather than trusting the
-pluralisation: `shared.hero` → `components_shared_heroes_cmps`,
-`shared.upcoming-events` → `components_shared_upcoming_events_cmps`. Task 4 Step 1
-checks every one against `sqlite_master` before anything depends on it.
+**Every name in that map must be checked against `sqlite_master` before anything
+depends on it** — Task 4 Step 1 does exactly that, and it is a gate, not a
+formality. Add a unit test asserting `Object.keys(CMPS_TABLE)` equals
+`Object.keys(CTA_SLOTS)`, so a component gaining a CTA slot without a table entry
+fails loudly instead of quietly showing no buttons.
 
 In the section loop, alongside `values`:
 
@@ -579,13 +596,20 @@ effect.
     }
 ```
 
-Fold the weakest result into the response so the screen can tell the truth:
+Fold the weakest result into the response, **and give a diverged CTA its own
+reason** — otherwise a section whose text writes cleanly but whose button is
+diverged returns `wrote: 1` with `skipReason: null`, and the screen says "your
+live page hasn't changed yet" with no explanation:
 
 ```js
-    const allWrote = Math.min(targets.length, ...ctaResults.map((c) => c.wrote));
+    const wrote = Math.min(targets.length, ...ctaResults.map((c) => c.wrote));
+    if (wrote < 2 && skipReason === null && ctaResults.some((c) => c.wrote < 2)) {
+      skipReason = 'content-diverged';
+    }
 ```
 
-and report `wrote: ctaResults.length ? allWrote : targets.length`.
+and report `{ wrote, ... }` with that `skipReason`. The screen's existing
+`draft:content-diverged` message already reads correctly for a button.
 
 - [ ] **Step 3: Verify the wiring**
 
@@ -657,14 +681,41 @@ const mediaSlotFor = (type) => MEDIA_SLOTS[type] ?? null;
 
 Read, alongside `ctas`:
 
+The component row must be read **with the media relation populated**, or
+`row.figure` is undefined and the screen never shows the current image. Change
+the existing read in the section loop:
+
 ```js
-        image: mediaSlotFor(pair.type)
-          ? { slot: mediaSlotFor(pair.type), url: row?.[mediaSlotFor(pair.type)]?.url ?? null }
-          : null,
+      const slot = mediaSlotFor(pair.type);
+      const row = await strapi.db.query(pair.type).findOne({
+        where: { id: pair.draftId },
+        ...(slot ? { populate: { [slot]: true } } : {}),
+      });
 ```
 
-`getOnePopulate`-style population is needed for that to be non-null — populate
-the media slot when reading the component row.
+then, alongside `ctas`:
+
+```js
+        image: slot ? { slot, url: row?.[slot]?.url ?? null } : null,
+```
+
+**Verify this populates before building on it.** `db.query(...).findOne` on a
+*component* is not obviously the same as on an entity:
+
+```bash
+cd /Users/nk/Projects/AREAA/areaa-cms && pkill -f "strapi develop" ; \
+  PATH="/opt/homebrew/bin:$PATH" node -e '
+const { createStrapi, compileStrapi } = require("@strapi/strapi");
+(async () => {
+  const app = await createStrapi(await compileStrapi()).load(); app.log.level = "error";
+  const row = await app.db.query("shared.hero").findOne({ where: { id: 3 }, populate: { figure: true } });
+  console.log("figure =", JSON.stringify(row?.figure));
+  await app.destroy(); process.exit(0);
+})();'
+```
+
+Expected: a media object with a `url`. **If it comes back undefined, stop** — the
+read shape is wrong and every image assertion below is untestable.
 
 Write, after the text fields:
 
@@ -690,6 +741,33 @@ Write, after the text fields:
     }
 ```
 
+**Verify this writes `files_related_mph` before building on it**, for the same
+reason — component media relations are not obviously the same as entity ones:
+
+```bash
+cd /Users/nk/Projects/AREAA/areaa-cms && pkill -f "strapi develop" ; \
+  PATH="/opt/homebrew/bin:$PATH" node -e '
+const { createStrapi, compileStrapi } = require("@strapi/strapi");
+(async () => {
+  const app = await createStrapi(await compileStrapi()).load(); app.log.level = "error";
+  const before = await app.db.connection("files_related_mph")
+    .where({ related_id: 3, related_type: "shared.hero", field: "figure" }).first();
+  console.log("before:", JSON.stringify(before));
+  const other = await app.db.connection("files").whereNot("id", before.file_id).first();
+  await app.db.query("shared.hero").update({ where: { id: 3 }, data: { figure: other.id } });
+  const after = await app.db.connection("files_related_mph")
+    .where({ related_id: 3, related_type: "shared.hero", field: "figure" }).first();
+  console.log("after :", JSON.stringify(after));
+  await app.db.query("shared.hero").update({ where: { id: 3 }, data: { figure: before.file_id } });
+  console.log("restored");
+  await app.destroy(); process.exit(0);
+})();'
+```
+
+Expected: `file_id` changes and changes back. **If it does not, the write shape is
+wrong** and the correct form is a direct `files_related_mph` upsert — find out
+here, not from a green test suite that asserted nothing.
+
 - [ ] **Step 4: Commit**
 
 ```bash
@@ -710,6 +788,48 @@ before adding cases, or the restore silently stops covering what the new tests
 change.
 
 - [ ] **Step 1: Write the tests**
+
+These use two helpers the suite does not have yet. Define them beside the
+existing ones, and derive them from `pages_cmps` rather than from the handler's
+own lookup — otherwise the tests use the function under test as their oracle:
+
+```js
+/** The draft and published parent ids for one section index. */
+const parentIdsFor = async (index) => {
+  const zone = await strapi.db.connection('pages_cmps as z')
+    .join('pages as p', 'p.id', 'z.entity_id')
+    .join('pages_chapter_lnk as l', 'l.page_id', 'p.id')
+    .join('chapters as c', 'c.id', 'l.chapter_id')
+    .where('c.document_id', chapterA.documentId).andWhere('p.slug', 'home')
+    .orderBy(['z.entity_id', 'z.order'])
+    .select('z.cmp_id', 'z.entity_id', 'z.order');
+  const byPage = {};
+  for (const r of zone) (byPage[r.entity_id] ??= []).push(r.cmp_id);
+  return Object.values(byPage).map((ids) => ids[index]).filter((v) => v !== undefined);
+};
+
+const publishedIdFor = async (index) => (await parentIdsFor(index))[1];
+
+/** Both statuses' shared.cta ids for one slot of one section. */
+const ctaIdsFor = async (index, slot) => {
+  const CMPS = {
+    'shared.hero': 'components_shared_heroes_cmps',
+    'shared.section': 'components_shared_sections_cmps',
+    'shared.upcoming-events': 'components_shared_upcoming_events_cmps',
+    'shared.member-group': 'components_shared_member_groups_cmps',
+    'shared.news-and-resources': 'components_shared_news_and_resources_cmps',
+    'shared.partner-callout': 'components_shared_partner_callouts_cmps',
+  };
+  const type = sections.find((s) => s.index === index).type;
+  const out = [];
+  for (const parentId of await parentIdsFor(index)) {
+    const row = await strapi.db.connection(CMPS[type])
+      .where({ entity_id: parentId, component_type: 'shared.cta', field: slot }).first();
+    if (row) out.push(row.cmp_id);
+  }
+  return out;
+};
+```
 
 ```js
 describe('PUT /api/chapter-admin/page — buttons', () => {
@@ -802,7 +922,12 @@ describe('PUT /api/chapter-admin/page — image', () => {
 
   it('attaches an uploaded image at both statuses', async () => {
     const hero = sections.find((s) => s.type === 'shared.hero');
-    const file = await strapi.db.connection('files').first();
+    // A file that is NOT the one already attached, so the assertion is not
+    // satisfied by the starting state.
+    const current = await strapi.db.connection('files_related_mph')
+      .where({ related_id: hero.draftId, related_type: 'shared.hero', field: 'figure' }).first();
+    const file = await strapi.db.connection('files')
+      .whereNot('id', current?.file_id ?? -1).orderBy('id').first();
     expect(file).toBeTruthy();
 
     const res = await save({ index: hero.index, figureId: file.id });
@@ -873,7 +998,58 @@ cd /Users/nk/Projects/AREAA/areaa-cms && \
 
 **Files:** Modify `src/lib/chapter-admin/page.ts`, `src/lib/page-form.ts`, `src/components/PageSectionForm.astro`, `src/pages/api/chapter-admin/page.ts`; create `tests/unit/page-form-cta.test.ts`
 
-- [ ] **Step 1: Types**
+- [ ] **Step 1: Types, and the message the admin needs to see**
+
+`savePageSection` returns `{ok, status, wrote, skipReason}` — **no `message`** —
+and the route collapses every 400 into `error=stale` → *"That section changed
+while you were editing. Reload and try again."* So `"That link is not a valid web
+address"`, `"Button text is required"` and `"No such button on this section"` all
+reach the admin as advice to reload, which does nothing. They retype the same
+href and get the same non-answer.
+
+Carry the reason through, exactly as plan 5 carries `skipReason`:
+
+```ts
+// src/lib/chapter-admin/page.ts
+export async function savePageSection(
+    jwt: string,
+    chapterSlug: string,
+    index: number,
+    values: Record<string, unknown>,
+    extra: { ctas?: Record<string, { label: string; href: string }>; figureId?: number } = {}
+): Promise<{ ok: boolean; status: number; wrote: number; skipReason: SkipReason; message: string }> {
+    const { status, body } = await call(jwt, "/page", {
+        method: "PUT",
+        // NOTE the shape: values are spread at TOP LEVEL, beside chapterSlug and
+        // index — not nested under `values`. The server reads input.title,
+        // input.ctas, input.figureId. Nesting them posts a body it ignores.
+        body: JSON.stringify({ chapterSlug, index, ...values, ...extra }),
+    });
+    return {
+        ok: status === 200 && Boolean(body?.data),
+        status,
+        wrote: body?.data?.wrote ?? 0,
+        skipReason: body?.meta?.skipReason ?? null,
+        message: body?.error?.message ?? "",
+    };
+}
+```
+
+In the route, a 400 now carries its reason:
+
+```ts
+    if (result.status === 400) {
+        return back(base, `error=invalid&why=${encodeURIComponent(result.message)}`);
+    }
+```
+
+and the screen renders it, falling back when the server sent nothing:
+
+```ts
+    invalid: why || "Please check that section and try again.",
+```
+
+- [ ] **Step 1b: Types**
 
 ```ts
 export interface PageCta { slot: string; label: string; href: string }
@@ -959,14 +1135,38 @@ rendered — and pulls `cta.<slot>.label` / `cta.<slot>.href` for each. Exactly 
 `editableFields` pattern plan 5 uses, for the same reason: the route cannot know
 which slots a section has, and the server whitelists again regardless.
 
+**Both of plan 5's early returns have to move**, or a section with buttons but no
+editable text never posts:
+
+```diff
+-    if (editable.length === 0) return null;
+     …
+-    if (Object.keys(values).length === 0) return null;
++    // Null only when there is NOTHING to save — no text, no buttons, no image.
++    if (Object.keys(values).length === 0 && !ctas && figureId === undefined) return null;
+```
+
+`ctas` is omitted entirely rather than sent as `{}` when the form declared no
+slots — an empty object would make the server iterate and the response claim a
+button was written.
+
 - [ ] **Step 4: The component**
 
 `PageSectionForm.astro` gains, inside the existing form:
 
-```astro
-    <input type="hidden" name="ctaSlots" value={section.ctas.map((c) => c.slot).join(",")} />
+`ctas` and `image` are **optional** on `PageSection`, and plan 5's existing test
+fixture supplies neither. Read them defensively at the top of the frontmatter, or
+the component throws on every one of plan 5's tests:
 
-    {section.ctas.map((cta) => (
+```astro
+const ctas = section.ctas ?? [];
+const image = section.image ?? null;
+```
+
+```astro
+    <input type="hidden" name="ctaSlots" value={ctas.map((c) => c.slot).join(",")} />
+
+    {ctas.map((cta) => (
         <fieldset class="psec__cta">
             <legend>{cta.slot === "secondaryCta" ? "Second button" : "Button"}</legend>
             <FormField label="Button text" name={`cta.${cta.slot}.label`} value={cta.label} required />
@@ -975,10 +1175,12 @@ which slots a section has, and the server whitelists again regardless.
         </fieldset>
     ))}
 
-    {section.image && (
+    {image && (
         <div class="psec__image">
             <p class="psec__image-label">Image</p>
-            {section.image.url && <img src={section.image.url} alt="" class="psec__image-preview" />}
+            {image.url && (
+                <img src={mediaUrl({ url: image.url })} alt="" class="psec__image-preview" />
+            )}
             <FormField label="Replace image" name="figure" type="file"
                 accept="image/jpeg,image/png,image/webp,image/avif"
                 helper="Leave empty to keep the current image." />
@@ -986,7 +1188,20 @@ which slots a section has, and the server whitelists again regardless.
     )}
 ```
 
-The form needs `enctype="multipart/form-data"` once an image slot is present.
+`mediaUrl` from `../lib/media` — Strapi's local provider stores `/uploads/…`,
+which 404s when rendered from the Astro origin.
+
+The `<form>` tag gains `enctype="multipart/form-data"` **unconditionally**, not
+only when an image slot is present: it is harmless for a text-only section and a
+conditional attribute is one more thing to get wrong per component type.
+
+`href` gets `required` alongside `label` — the schema marks both required, and
+without it an admin can clear the link and get a server 400 instead of the
+browser's own message.
+
+Add CSS for `.psec__cta`, `.psec__image`, `.psec__image-label` and
+`.psec__image-preview`; the preview needs `max-width: 200px; height: auto;` or a
+placeholder renders at natural size in a 720px column.
 
 - [ ] **Step 5: The route uploads, then saves**
 
@@ -1002,14 +1217,34 @@ Mirror `event.ts` exactly — it is the proven flow:
     }
 ```
 
-and pass `figureId` through to `savePageSection`. Add `upload` to the screen's
-`errorMessages` map, or an upload failure redirects to a code with no message.
+and pass `figureId` through to `savePageSection`.
+
+**Upload AFTER the payload check, not before** — `event.ts` validates first for a
+reason: an upload that succeeds and is then abandoned leaves an orphaned file in
+the media library.
+
+The route already appends `&message=…`, and `page.astro` never reads it, so
+plan 1's actual reason — "that file is not an image", "that file is too large" —
+is discarded. Read it, as the screen already does for `why`:
+
+```ts
+    upload: message || "That image couldn't be uploaded. Please try another file.",
+```
+
+with `const message = sp.get("message");` beside the existing `why`. Add a
+walkthrough row for a rejected upload, or nothing exercises this path.
 
 - [ ] **Step 6: Write the failing render test**
 
+The existing file defines a `section(over)` **factory**, not a `base` object —
+use it, or the whole file fails to collect and takes plan 5's 8 tests with it.
+Add these to `tests/unit/page-section-render.test.ts`; it is **not** a new file:
+
 ```ts
 describe("PageSectionForm — buttons and image", () => {
-    const withCta = { ...base, ctas: [{ slot: "primaryCta", label: "Learn More", href: "/about" }] };
+    const withCta = section({
+        ctas: [{ slot: "primaryCta", label: "Learn More", href: "/about" }],
+    });
 
     it("renders a text and a link field per button, with current values", async () => {
         const html = await render({ section: withCta });
@@ -1028,28 +1263,35 @@ describe("PageSectionForm — buttons and image", () => {
     });
 
     it("renders NO button fields for a section with none", async () => {
-        const html = await render({ section: { ...base, ctas: [] } });
+        const html = await render({ section: section({ ctas: [] }) });
         expect(html).not.toContain("cta.");
-        expect(html).toMatch(/value=""[^>]*name="ctaSlots"|name="ctaSlots"[^>]*value=""/);
+        // Astro serialises an empty-string attribute BARE — `value` with no
+        // `=""`. Asserting on `value=""` matches no implementation at all.
+        expect(html).toMatch(/name="ctaSlots"[^>]*value(\s|>)/);
     });
 
-    it("shows the current image and a replace field", async () => {
-        const html = await render({ section: { ...base,
-            image: { slot: "figure", url: "/uploads/placeholder.png" } } });
-        expect(html).toContain("/uploads/placeholder.png");
+    it("shows the current image, through mediaUrl, and a replace field", async () => {
+        // Strapi's local provider stores a RELATIVE url; rendered from the Astro
+        // origin it 404s. Every public renderer goes through mediaUrl(); this
+        // must too, or the preview is a broken image on every chapter.
+        const html = await render({ section: section({
+            image: { slot: "figure", url: "/uploads/placeholder.png" } }) });
+        expect(html).toContain("http://localhost:1337/uploads/placeholder.png");
         expect(html).toContain('type="file"');
         expect(html).toContain("multipart/form-data");
     });
 
     it("renders NO image field for a section without one", async () => {
-        const html = await render({ section: { ...base, image: null } });
+        const html = await render({ section: section({ image: null }) });
         expect(html).not.toContain('type="file"');
     });
 
     it("survives a section whose ctas and image are absent entirely", async () => {
-        // An API a version behind must degrade to plan 5's behaviour, not throw.
-        const { ctas, image, ...older } = base as any;
-        const html = await render({ section: older });
+        // Plan 5's own fixture has neither, and an API one deploy behind sends
+        // neither. The component must read them defensively or it throws
+        // `Cannot read properties of undefined (reading 'map')` and takes plan
+        // 5's eight tests down with it — verified.
+        const html = await render({ section: section() });
         expect(html).toContain("<form");
     });
 });
@@ -1062,7 +1304,7 @@ cd /Users/nk/Projects/AREAA/areaa-frontend && npm run check
 cd /Users/nk/Projects/AREAA/areaa-frontend && npm test
 ```
 
-Expected: 0 errors, then **102 passed** (90 + 6 payload + 6 render).
+Expected: 0 errors, then **102 passed** (90 + 6 payload + 6 render). Task 7 takes it to **105**.
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-frontend && git add -A src/ tests/ && \
@@ -1071,9 +1313,94 @@ cd /Users/nk/Projects/AREAA/areaa-frontend && git add -A src/ tests/ && \
 
 ---
 
+### Task 7: External CTAs get a rel guard
+
+**Files:** Modify `src/components/Hero.astro`, `src/components/Section.astro`; modify `tests/unit/` (new render test file)
+
+Chunk 1 normalises an off-site href to absolute **so the renderer can tell it is
+off-site**. Verified: it cannot. `Hero.astro:46-53` and `Section.astro` render
+
+```astro
+<a href={primaryCta.href} class="hero__btn hero__btn--primary">{primaryCta.label}</a>
+```
+
+with **no `rel`, no `target`, no protocol inspection**. Repo-wide, `noopener`
+appears only in `RichTextInline` (a different data path that never sees a
+`shared.cta`), `events/[slug].astro`, and two "view current image" links. Without
+this task the absolutising in Chunk 1 buys nothing at render time, and the
+Done-when criterion built on it is false.
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+import { describe, it, expect } from "vitest";
+import { experimental_AstroContainer as AstroContainer } from "astro/container";
+import Hero from "../../src/components/Hero.astro";
+
+const render = async (href: string) => {
+    const container = await AstroContainer.create();
+    return container.renderToString(Hero, { props: {
+        heading: "H", primaryCta: { label: "Go", href } } });
+};
+
+describe("Hero CTA link safety", () => {
+    it("opens an off-site button in a new tab, with a rel guard", async () => {
+        const html = await render("https://evil.example/x");
+        expect(html).toContain('rel="noopener noreferrer"');
+        expect(html).toContain('target="_blank"');
+    });
+
+    it("leaves an in-site button alone", async () => {
+        // Same-tab navigation is what an admin means by /events, and a rel
+        // guard on it would be noise.
+        const html = await render("/events");
+        expect(html).not.toContain("noopener");
+        expect(html).not.toContain('target="_blank"');
+    });
+
+    it("treats a fragment and a mailto as in-site", async () => {
+        for (const href of ["#contact", "mailto:hi@areaa.org"]) {
+            expect(await render(href), href).not.toContain('target="_blank"');
+        }
+    });
+});
+```
+
+- [ ] **Step 2: Implement**
+
+Reuse the shape `RichTextInline` already uses, so the two agree:
+
+```astro
+const isExternal = (url?: string | null) => !!url && /^https?:\/\//i.test(url);
+```
+
+and spread `{...(isExternal(cta.href) ? { target: "_blank", rel: "noopener noreferrer" } : {})}`
+onto each CTA anchor in both components.
+
+**This is why Chunk 1 absolutises.** A stored `//evil.example/x` does not match
+that regex; `https://evil.example/x` does. Normalising is what makes the
+inference correct.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+cd /Users/nk/Projects/AREAA/areaa-frontend && npx vitest run tests/unit/cta-link-safety.test.ts
+cd /Users/nk/Projects/AREAA/areaa-frontend && npm run check
+```
+
+Expected: **3 tests**, 0 errors.
+
+```bash
+cd /Users/nk/Projects/AREAA/areaa-frontend && \
+  git add src/components/Hero.astro src/components/Section.astro tests/unit/cta-link-safety.test.ts && \
+  git commit -m "fix: external CTAs open in a new tab with a rel guard"
+```
+
+---
+
 ## Chunk 5: Verification
 
-### Task 7: Both suites, twice, with no drift
+### Task 8: Both suites, twice, with no drift
 
 ```bash
 cd /Users/nk/Projects/AREAA/areaa-cms && pkill -f "strapi develop" ; \
@@ -1082,25 +1409,34 @@ cd /Users/nk/Projects/AREAA/areaa-frontend && npm test
 cd /Users/nk/Projects/AREAA/areaa-frontend && npm run check
 ```
 
-Expected: **269 CMS**, **102 frontend**, 0 typecheck errors, `pages_cmps`
+Expected: **269 CMS**, **105 frontend**, 0 typecheck errors, `pages_cmps`
 byte-identical across two CMS runs, and the extended copy snapshot unchanged.
 
-### Task 8: Prove it in a browser
+### Task 9: Prove it in a browser
 
 Snapshot first, with a scripted restore ready **before** the servers start.
 
+**Use the Text Section for rows 2–6, not the Header.** aloha's draft and
+published *hero* differ today (`Chorp Chipper` / `Our Chapter`), so plan 5's
+parity gate nulls the published write and the hero reports `wrote: 1` — an
+earlier draft of this walkthrough expected "Section saved." on the hero in row 2
+and "Saved to your draft…" on the same card in row 9, which cannot both hold.
+Row 9 exercises the hero deliberately; everything else uses a section whose two
+statuses agree.
+
 | # | Action | Expected |
 |---|---|---|
-| 1 | `/page`, the Header card | Heading, Body Text, **Button text** "Learn More", **Button links to** `/about`, and the current **image** |
-| 2 | Change the button to "Join AREAA Hawaii" → `/chapters/aloha-hawaii` → Save | "Section saved." |
-| 3 | **Visit the microsite** | The hero button says the new text and goes to the chapter page — **the thing this plan exists for** |
-| 4 | Upload a real image on the hero → Save | Preview updates; the microsite shows it, replacing the placeholder |
-| 5 | Set a button link to `javascript:alert(1)` | Refused with "That link is not a valid web address"; nothing written; no alert on the public page |
-| 6 | Set a button link to `//evil.example` | Stored as `https://evil.example/`, and the rendered link carries `rel="noopener noreferrer"` |
+| 1 | `/page`, the Text Section card | Heading, Body Text, **Button text** "View Membership Benefits", **Button links to** `/membership` |
+| 2 | Change it to "Join AREAA Hawaii" → `/chapters/aloha-hawaii` → Save | "Section saved." |
+| 3 | **Visit the microsite** | The section button says the new text and goes to the chapter page — **the thing this plan exists for** |
+| 4 | Upload a real image on the **Header** card → Save | Preview updates; the microsite hero shows it instead of the placeholder. (The image write is deliberately ungated, so this succeeds even though the hero's text is diverged.) |
+| 5 | Set a button link to `javascript:alert(1)` | Refused, and the screen shows **"That link is not a valid web address"** — not "reload and try again" |
+| 6 | Set a button link to `//evil.example` | Stored as `https://evil.example/`; the rendered link carries `target="_blank"` and `rel="noopener noreferrer"` (Task 7) |
 | 7 | Gallery card | Heading only — no button, no image field |
-| 8 | Disable JavaScript, repeat 2 | Works identically. Repeat 4 — a file input needs no JS either |
-| 9 | Edit the hero, whose draft and published differ today | "Saved to your draft…" — plan 5's parity guard still fires |
-| 10 | As `twochapter@areaa.test`, chapter B's page | B's own buttons, not A's |
+| 8 | Upload a `.txt` renamed to `.png` | Refused with plan 1's reason, shown on screen |
+| 9 | Disable JavaScript, repeat 2 and 4 | Both work — a file input needs no JS either |
+| 10 | Edit the **Header**'s button text | "Saved to your draft…" with a reason naming the divergence — plan 5's guard, now covering CTAs |
+| 11 | As `twochapter@areaa.test`, chapter B's page | B's own buttons, not A's |
 
 Restore, verify against the snapshot, then stop the servers.
 
@@ -1108,11 +1444,12 @@ Restore, verify against the snapshot, then stop the servers.
 
 ## Done when
 
-- **269 CMS and 102 frontend tests green**, CMS twice, `pages_cmps` byte-identical.
+- **269 CMS and 105 frontend tests green**, CMS twice, `pages_cmps` byte-identical.
 - A chapter admin changes a button's text and link, **with JavaScript disabled**, and the public microsite shows it.
 - A chapter admin replaces the hero placeholder with a real image, and the microsite shows it.
-- Both are written at draft **and** published, under plan 5's content-parity gate.
-- `javascript:` is refused with a message the admin can act on; `//evil.example` is stored absolute so the renderer adds `rel="noopener"`.
+- The **button** is written at draft and published under plan 5's content-parity gate. The **image** is written at both unconditionally — media rows are not draft/published, so there is nothing to diverge (Task 4 Step 3 says so; this criterion used to contradict it).
+- `javascript:` is refused and **the reason reaches the screen** — not "reload and try again".
+- `//evil.example` is stored absolute, **and** `Hero.astro`/`Section.astro` render an off-site CTA with `target="_blank"` and `rel="noopener noreferrer"` (Task 7). Neither half is worth much without the other.
 - A section with no button offers no button fields; one with no image offers no file field.
 - All six `normaliseUrl` mutations are killed, on a baseline asserted green first.
 - Permissions are still **25** — this plan adds no routes.
@@ -1154,7 +1491,10 @@ diagnostic rather than a gate.
   portrait photo into a landscape hero and it will be cropped by CSS.
 - **`videoUrl` and `feedUrl` remain national-only**, so a chapter cannot point
   its own video or social feed anywhere.
-- **`rel="noopener"` depends on the renderer**, which infers "external" from the
-  href starting `http`. Storing off-site links absolute is what makes that
-  inference correct — but the inference itself lives in `RichTextInline` and
-  `Hero.astro` and is not enforced by this plan.
+- **The external-link inference is a regex on the stored href.** Task 7 adds it
+  to `Hero.astro` and `Section.astro`, matching what `RichTextInline` already
+  does. Two copies of `/^https?:\/\//i` now exist with nothing asserting they
+  agree; a third renderer would need a third.
+- **`secondaryCta` is never exercised.** aloha's hero carries only `primaryCta`,
+  no walkthrough row touches a second button, and only one render test does. The
+  slot map says hero and section carry two; nothing proves the second works.
