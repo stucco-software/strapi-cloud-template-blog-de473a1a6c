@@ -16,8 +16,28 @@ const require = createRequire(import.meta.url);
 const RUN = Date.now();
 
 let strapi;
+
+/**
+ * Accounts this file creates, torn down in afterAll.
+ *
+ * Not optional hygiene. Several tests below build DELIBERATELY broken users —
+ * the chapter_admin role with no capability, for instance — and the
+ * equivalence test asserts over every user in the database. Left behind, those
+ * counterexamples are indistinguishable from a real regression on the next
+ * run, and they accumulate one set per run.
+ */
+const created = [];
+const track = (user) => { created.push(user.documentId); return user; };
+
 beforeAll(async () => { strapi = await boot(); });
-afterAll(shutdown);
+
+afterAll(async () => {
+  for (const documentId of created) {
+    await strapi.documents('plugin::users-permissions.user')
+      .delete({ documentId }).catch(() => {});
+  }
+  await shutdown();
+});
 
 describe('capability seed', () => {
   it('creates exactly the three capabilities, each with categories', async () => {
@@ -57,12 +77,12 @@ describe('User.capabilities', () => {
       .findMany({ filters: { slug: { $in: ['national_admin', 'chapter_admin'] } } });
     expect(caps).toHaveLength(2);
 
-    const user = await strapi.plugin('users-permissions').service('user').add({
+    const user = track(await strapi.plugin('users-permissions').service('user').add({
       username: `multicap-${RUN}@areaa.test`, email: `multicap-${RUN}@areaa.test`,
       password: 'Password123!', confirmed: true, provider: 'local',
       firstName: 'Multi', lastName: 'Cap',
       capabilities: caps.map((c) => c.id),
-    });
+    }));
 
     const read = await strapi.documents('plugin::users-permissions.user').findOne({
       documentId: user.documentId,
@@ -116,12 +136,12 @@ describe('Committee Leader scope', () => {
       .findMany({ fields: ['name'], limit: 1, status: 'draft' });
     expect(committees).toHaveLength(1);
 
-    const user = await strapi.plugin('users-permissions').service('user').add({
+    const user = track(await strapi.plugin('users-permissions').service('user').add({
       username: `leader-${RUN}@areaa.test`, email: `leader-${RUN}@areaa.test`,
       password: 'Password123!', confirmed: true, provider: 'local',
       firstName: 'Lead', lastName: 'Er',
       ledCommittees: [committees[0].id],
-    });
+    }));
 
     const read = await strapi.documents('plugin::users-permissions.user').findOne({
       documentId: user.documentId,
@@ -149,9 +169,9 @@ describe('fail closed', () => {
     // and role present, authority absent. It must be a clean 403 — not a 500,
     // and above all not a silent success.
     const [chapter] = await draftChapters(strapi, 1);
-    const user = await makeChapterAdmin(strapi, {
+    const user = track(await makeChapterAdmin(strapi, {
       email: `nocap-${RUN}@areaa.test`, chapterIds: [chapter.id], capabilities: [],
-    });
+    }));
     const jwt = await jwtFor(strapi, user.id);
 
     const res = await request(strapi.server.httpServer)
@@ -165,10 +185,10 @@ describe('fail closed', () => {
     // committee_leader has no routes yet by design. Holding it must not open
     // the chapter-admin surface — the cross-capability attack.
     const [chapter] = await draftChapters(strapi, 1);
-    const user = await makeChapterAdmin(strapi, {
+    const user = track(await makeChapterAdmin(strapi, {
       email: `leaderonly-${RUN}@areaa.test`, chapterIds: [chapter.id],
       capabilities: ['committee_leader'],
-    });
+    }));
     const jwt = await jwtFor(strapi, user.id);
 
     const res = await request(strapi.server.httpServer)
@@ -182,10 +202,10 @@ describe('fail closed', () => {
     // The bypass. Scope link deliberately empty: unscoped is a National
     // Admin's normal state, not a misconfiguration.
     const [chapter] = await draftChapters(strapi, 1);
-    const user = await makeChapterAdmin(strapi, {
+    const user = track(await makeChapterAdmin(strapi, {
       email: `national-${RUN}@areaa.test`, chapterIds: [],
       capabilities: ['national_admin'],
-    });
+    }));
     const jwt = await jwtFor(strapi, user.id);
 
     const res = await request(strapi.server.httpServer)
@@ -199,13 +219,13 @@ describe('fail closed', () => {
     // Without chapterSlug, "unscoped" has to mean every chapter — not the
     // empty set its administeredChapters literally contains.
     const [chapterA, chapterB] = await draftChapters(strapi, 2);
-    const national = await makeChapterAdmin(strapi, {
+    const national = track(await makeChapterAdmin(strapi, {
       email: `national-list-${RUN}@areaa.test`, chapterIds: [],
       capabilities: ['national_admin'],
-    });
-    const scoped = await makeChapterAdmin(strapi, {
+    }));
+    const scoped = track(await makeChapterAdmin(strapi, {
       email: `scoped-list-${RUN}@areaa.test`, chapterIds: [chapterA.id],
-    });
+    }));
 
     const [wide, narrow] = await Promise.all([
       request(strapi.server.httpServer).get('/api/chapter-admin/events')
@@ -240,10 +260,10 @@ describe('fail closed', () => {
   it('still refuses a national admin a request that names no chapter target', async () => {
     // updateSubmission on a chapterless (national contact form) submission.
     // Bypassing WHICH chapter is not bypassing WHETHER there is one.
-    const national = await makeChapterAdmin(strapi, {
+    const national = track(await makeChapterAdmin(strapi, {
       email: `national-null-${RUN}@areaa.test`, chapterIds: [],
       capabilities: ['national_admin'],
-    });
+    }));
     const submission = await strapi.documents('api::form-submission.form-submission')
       .create({ data: { name: `Null Chapter ${RUN}`, email: 'x@example.com' } });
 
@@ -262,10 +282,10 @@ describe('fail closed', () => {
 describe('GET /api/users/me', () => {
   it('exposes the caller’s capabilities', async () => {
     const [chapter] = await draftChapters(strapi, 1);
-    const user = await makeChapterAdmin(strapi, {
+    const user = track(await makeChapterAdmin(strapi, {
       email: `mecaps-${RUN}@areaa.test`, chapterIds: [chapter.id],
       capabilities: ['chapter_admin', 'national_admin'],
-    });
+    }));
 
     const res = await request(strapi.server.httpServer)
       .get('/api/users/me')
@@ -295,5 +315,63 @@ describe('GET /api/users/me', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.capabilities).toEqual([]);
+  });
+});
+
+describe('backfill equivalence', () => {
+  it("every user's effective grants match what their role granted before", async () => {
+    const { grantsFor, AUTHENTICATED_GRANTS } =
+      require('../../src/api/chapter-admin/grants.js');
+    const baseline = [...AUTHENTICATED_GRANTS].sort();
+
+    // Every user the backfill actually migrated — i.e. everyone who existed at
+    // boot. Accounts THIS FILE fabricated after boot are excluded on purpose:
+    // several are deliberately broken (the chapter_admin role with no
+    // capability) to prove the fail-closed path, they were never backfilled,
+    // and counting them here would assert that a counterexample is not a
+    // counterexample.
+    const all = await strapi.query('plugin::users-permissions.user').findMany({
+      populate: { role: true, capabilities: true },
+      limit: -1,
+    });
+    const users = all.filter((u) => !created.includes(u.documentId));
+    expect(users.length).toBeGreaterThan(0);
+    expect(users.length).toBeLessThan(all.length); // the filter did something
+
+    let sawAdmin = false;
+    let sawMember = false;
+
+    for (const user of users) {
+      // What the role grants today — read from the database, the shipped truth.
+      // Distinct actions, NOT row counts: chapter_admin has 31 link rows against
+      // 30 distinct actions (one orphan pointing at a deleted permission), so
+      // comparing counts would report a regression that is not there.
+      const rows = await strapi.query('plugin::users-permissions.permission')
+        .findMany({ where: { role: user.role.id } });
+      const fromRole = [...new Set(rows.map((r) => r.action))].sort();
+
+      // What the capability model computes.
+      const fromCaps = grantsFor((user.capabilities ?? []).map((c) => c.slug));
+
+      if (user.role.type === 'chapter_admin') {
+        sawAdmin = true;
+        expect(fromCaps, user.email).toEqual(fromRole);
+      } else {
+        sawMember = true;
+        // Ordinary members hold no capability, so the model gives them exactly
+        // the baseline — stated as a literal set, not derived from fromRole,
+        // which would make the assertion agree with itself.
+        expect(fromCaps, user.email).toEqual(baseline);
+        // …and the baseline is genuinely a subset of what the role already
+        // granted them, so nobody GAINED anything from the migration.
+        for (const action of fromCaps) {
+          expect(fromRole, `${user.email} gained ${action}`).toContain(action);
+        }
+      }
+    }
+
+    // Both branches must actually have run, or this passes by covering nothing.
+    expect(sawAdmin, 'no chapter_admin user in the fixture').toBe(true);
+    expect(sawMember, 'no ordinary member in the fixture').toBe(true);
   });
 });
