@@ -505,6 +505,10 @@ export interface ApiCommitteeCommittee extends Struct.CollectionTypeSchema {
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
     description: Schema.Attribute.Text;
+    leaders: Schema.Attribute.Relation<
+      'manyToMany',
+      'plugin::users-permissions.user'
+    >;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<
       'oneToMany',
@@ -1376,6 +1380,10 @@ export interface PluginUsersPermissionsUser
       Schema.Attribute.DefaultTo<false>;
     bio: Schema.Attribute.Text;
     blocked: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    capabilities: Schema.Attribute.Relation<
+      'manyToMany',
+      'api::member-capability.member-capability'
+    >;
     chapter: Schema.Attribute.Relation<'manyToOne', 'api::chapter.chapter'>;
     company: Schema.Attribute.String;
     confirmationToken: Schema.Attribute.String & Schema.Attribute.Private;
@@ -1397,6 +1405,10 @@ export interface PluginUsersPermissionsUser
     instagram: Schema.Attribute.String;
     languages: Schema.Attribute.String;
     lastName: Schema.Attribute.String & Schema.Attribute.Required;
+    ledCommittees: Schema.Attribute.Relation<
+      'manyToMany',
+      'api::committee.committee'
+    >;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<
       'oneToMany',

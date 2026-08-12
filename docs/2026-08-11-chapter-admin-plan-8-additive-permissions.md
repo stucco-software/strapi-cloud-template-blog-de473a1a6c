@@ -218,6 +218,29 @@ A declared, tested implication map makes "National Admin" mean something on its 
 
 ---
 
+## Executed — 2026-08-12
+
+All five chunks landed. Final state: **CMS 23 files / 387 tests**, **frontend 27 files / 246 tests**, both green from a cold start (`rm -rf .strapi dist`). Database identical to baseline: `authenticated|5`, `chapter_admin|30`, `public|29`, 10 users, 3 capabilities.
+
+Seven things the plan got wrong or under-specified, corrected in place:
+
+1. **`published_at` is expected.** Task 1 Step 3 said its presence meant `draftAndPublish` had not taken. False — Strapi 5 puts `document_id`, `locale` and `published_at` on every content type. The real invariant is row count, now tested directly.
+2. **`list()` would have 403'd national admins.** It built its filter from `administeredChapters` and refused an empty one, so an unscoped national admin was rejected and then shown nothing. Fixed with `$notNull` rather than `{}` — "every chapter" must not quietly become "no chapter" and start surfacing the chapterless national records `getOne` 404s.
+3. **`assertChapterScopeFor`** was added, unplanned. Seven call sites needed the bypass; threading `unscoped` through each by hand is how one gets forgotten, and a forgotten one reads as a data problem rather than a code one.
+4. **`makeChapterAdmin` had to attach capabilities.** The boot backfill only sees users that already exist; tests mint theirs afterwards. 67 tests failed until the helper was taught this — expected, and exactly what the plan predicted would happen if the backfill were skipped.
+5. **The equivalence test must exclude fabricated accounts.** Several tests deliberately build broken users (the role with no capability) to prove fail-closed. Counting them would assert that a counterexample is not a counterexample.
+6. **`email` cannot appear in `populate.fields`** — it is `private: true` and the content-API validator rejects it outright. Use `username`.
+7. **The `__capabilities` non-function export is fine.** Flagged as a risk in Task 11; `npm run develop` boots clean, so the fallback module was not needed.
+
+Not done, and needing a human: **clicking through the admin UI.** Verified programmatically instead — the content type is registered, `content-manager` visible, and a capability authored at runtime attaches to a user with no code change (§3.1.1.10). The literal UI walk-through in Task 15 Step 3 is still worth doing once.
+
+Two intermittents observed, neither traced to this work and both worth knowing:
+
+- **The frontend's `auth-outage` / `client-retry` tests failed once** in a full run and passed in isolation and in three subsequent full runs. No frontend file was touched by this plan. Timing-sensitive; pre-existing.
+- **Two CMS runs took ~1000s instead of ~16s** and still passed. Cause was concurrent vitest invocations (see precondition 3a) plus leaked fixture users; both are fixed. Two of those slow runs remain unexplained after the fix, so if it recurs, start at precondition 3a rather than at the source.
+
+---
+
 ## Chunk 1: The capability collection
 
 ### Task 1: `api::member-capability` content type
