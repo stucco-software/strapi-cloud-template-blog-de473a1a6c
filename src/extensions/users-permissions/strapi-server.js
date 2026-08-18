@@ -23,6 +23,14 @@
  * whitelist), so password/token fields stay hidden exactly as the default does.
  */
 
+const {
+  HAS_LOCATION,
+  NO_LOCATION,
+  LOCATED_SORT,
+  UNLOCATED_SORT,
+  locationPageWindow,
+} = require('./directory-sort');
+
 // Profile fields a member may edit about themselves. Deliberately excludes
 // identity/entitlement fields (email, status, chapter, role, memberSince,
 // duesPaidThrough, autoRenew) — those are set by admins/billing, not the form.
@@ -58,9 +66,13 @@ const DIRECTORY_DEFAULT_PAGE_SIZE = 12;
 // param maps to a fixed order; anything unrecognized falls back to name. Every
 // option ends in name order so paging stays deterministic on ties. (Relevance
 // ranking is Phase B — it needs a scored query the document service can't express.)
+// `location` is the whitelist entry, not the whole story: sorting by it needs
+// blanks last, which one order list cannot express, so the handler branches to
+// the two-partition read in directory-sort.js. The order below is what the
+// LOCATED partition uses.
 const DIRECTORY_SORTS = {
   name: ['lastName:asc', 'firstName:asc'],
-  location: ['location:asc', 'lastName:asc', 'firstName:asc'],
+  location: LOCATED_SORT,
 };
 const DIRECTORY_DEFAULT_SORT = 'name';
 
@@ -243,23 +255,67 @@ module.exports = (plugin) => {
       DIRECTORY_MAX_PAGE_SIZE,
       Math.max(1, parseInt(firstStr(query.pageSize), 10) || DIRECTORY_DEFAULT_PAGE_SIZE)
     );
-    const sort = DIRECTORY_SORTS[firstStr(query.sort)] || DIRECTORY_SORTS[DIRECTORY_DEFAULT_SORT];
+    // Resolve the KEY, not just the sort array: sorting by location takes a
+    // different query shape, so the branch below needs to know which mode won
+    // the whitelist check rather than inferring it back out of the order list.
+    const rawSort = firstStr(query.sort);
+    const sortKey = DIRECTORY_SORTS[rawSort] ? rawSort : DIRECTORY_DEFAULT_SORT;
 
     const docs = strapi.documents('plugin::users-permissions.user');
-    const [rows, total] = await Promise.all([
-      docs.findMany({
-        filters,
-        fields: DIRECTORY_FIELDS,
-        populate: {
-          chapter: { fields: ['name', 'slug'] },
-          image: { fields: ['url', 'alternativeText'] },
-        },
-        sort,
-        limit: pageSize,
-        start: (pageNum - 1) * pageSize,
-      }),
-      docs.count({ filters }),
-    ]);
+    const populate = {
+      chapter: { fields: ['name', 'slug'] },
+      image: { fields: ['url', 'alternativeText'] },
+    };
+    const start = (pageNum - 1) * pageSize;
+
+    let rows;
+    let total;
+
+    if (sortKey === 'location') {
+      // Blanks last, which `location:asc` cannot express — see directory-sort.js.
+      const [locatedTotal, all] = await Promise.all([
+        docs.count({ filters: { $and: [filters, HAS_LOCATION] } }),
+        docs.count({ filters }),
+      ]);
+      total = all;
+
+      const window = locationPageWindow(start, pageSize, locatedTotal);
+      const [located, unlocated] = await Promise.all([
+        window.located.limit
+          ? docs.findMany({
+              filters: { $and: [filters, HAS_LOCATION] },
+              fields: DIRECTORY_FIELDS,
+              populate,
+              sort: LOCATED_SORT,
+              limit: window.located.limit,
+              start: window.located.start,
+            })
+          : [],
+        window.unlocated.limit
+          ? docs.findMany({
+              filters: { $and: [filters, NO_LOCATION] },
+              fields: DIRECTORY_FIELDS,
+              populate,
+              sort: UNLOCATED_SORT,
+              limit: window.unlocated.limit,
+              start: window.unlocated.start,
+            })
+          : [],
+      ]);
+      rows = [...located, ...unlocated];
+    } else {
+      [rows, total] = await Promise.all([
+        docs.findMany({
+          filters,
+          fields: DIRECTORY_FIELDS,
+          populate,
+          sort: DIRECTORY_SORTS[sortKey],
+          limit: pageSize,
+          start,
+        }),
+        docs.count({ filters }),
+      ]);
+    }
 
     // Hand-build the response — only whitelisted, display-safe fields ship.
     ctx.body = {
