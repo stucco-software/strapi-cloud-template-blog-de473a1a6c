@@ -45,7 +45,10 @@
         "shared.video-embed",
         "shared.gallery",
         "shared.contact-form",
-        "shared.faq"
+        "shared.faq",
+        "shared.stat-band",
+        "shared.card-grid",
+        "shared.timeline"
       ]
     }
   }

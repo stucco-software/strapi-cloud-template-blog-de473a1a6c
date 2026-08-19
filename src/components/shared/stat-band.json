@@ -1,0 +1,15 @@
+{
+  "collectionName": "components_shared_stat_bands",
+  "info": {
+    "displayName": "Stat Band",
+    "icon": "chartCircle"
+  },
+  "options": {},
+  "attributes": {
+    "items": {
+      "type": "component",
+      "component": "shared.stat-item",
+      "repeatable": true
+    }
+  }
+}

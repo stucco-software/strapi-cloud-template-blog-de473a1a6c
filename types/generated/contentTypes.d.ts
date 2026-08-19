@@ -788,6 +788,9 @@ export interface ApiPagePage extends Struct.CollectionTypeSchema {
         'shared.gallery',
         'shared.contact-form',
         'shared.faq',
+        'shared.stat-band',
+        'shared.card-grid',
+        'shared.timeline',
       ]
     >;
     createdAt: Schema.Attribute.DateTime;

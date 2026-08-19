@@ -1,5 +1,30 @@
 import type { Schema, Struct } from '@strapi/strapi';
 
+export interface SharedCard extends Struct.ComponentSchema {
+  collectionName: 'components_shared_cards';
+  info: {
+    displayName: 'Card';
+    icon: 'layer';
+  };
+  attributes: {
+    body: Schema.Attribute.Blocks;
+    figure: Schema.Attribute.Media<'images'>;
+    title: Schema.Attribute.String & Schema.Attribute.Required;
+  };
+}
+
+export interface SharedCardGrid extends Struct.ComponentSchema {
+  collectionName: 'components_shared_card_grids';
+  info: {
+    displayName: 'Card Grid';
+    icon: 'grid';
+  };
+  attributes: {
+    items: Schema.Attribute.Component<'shared.card', true>;
+    title: Schema.Attribute.String;
+  };
+}
+
 export interface SharedContactForm extends Struct.ComponentSchema {
   collectionName: 'components_shared_contact_forms';
   info: {
@@ -92,6 +117,7 @@ export interface SharedHero extends Struct.ComponentSchema {
   };
   attributes: {
     body: Schema.Attribute.Blocks;
+    eyebrow: Schema.Attribute.String;
     figure: Schema.Attribute.Media<'images' | 'files' | 'videos' | 'audios'>;
     primaryCta: Schema.Attribute.Component<'shared.cta', false>;
     secondaryCta: Schema.Attribute.Component<'shared.cta', false>;
@@ -239,6 +265,53 @@ export interface SharedSocialMediaFeed extends Struct.ComponentSchema {
   };
 }
 
+export interface SharedStatBand extends Struct.ComponentSchema {
+  collectionName: 'components_shared_stat_bands';
+  info: {
+    displayName: 'Stat Band';
+    icon: 'chartCircle';
+  };
+  attributes: {
+    items: Schema.Attribute.Component<'shared.stat-item', true>;
+  };
+}
+
+export interface SharedStatItem extends Struct.ComponentSchema {
+  collectionName: 'components_shared_stat_items';
+  info: {
+    displayName: 'Stat Item';
+    icon: 'chartCircle';
+  };
+  attributes: {
+    label: Schema.Attribute.String & Schema.Attribute.Required;
+    value: Schema.Attribute.String & Schema.Attribute.Required;
+  };
+}
+
+export interface SharedTimeline extends Struct.ComponentSchema {
+  collectionName: 'components_shared_timelines';
+  info: {
+    displayName: 'Timeline';
+    icon: 'clock';
+  };
+  attributes: {
+    items: Schema.Attribute.Component<'shared.timeline-item', true>;
+    title: Schema.Attribute.String;
+  };
+}
+
+export interface SharedTimelineItem extends Struct.ComponentSchema {
+  collectionName: 'components_shared_timeline_items';
+  info: {
+    displayName: 'Timeline Item';
+    icon: 'clock';
+  };
+  attributes: {
+    body: Schema.Attribute.Blocks;
+    heading: Schema.Attribute.String & Schema.Attribute.Required;
+  };
+}
+
 export interface SharedUpcomingEvents extends Struct.ComponentSchema {
   collectionName: 'components_shared_upcoming_events';
   info: {
@@ -268,6 +341,8 @@ export interface SharedVideoEmbed extends Struct.ComponentSchema {
 declare module '@strapi/strapi' {
   export module Public {
     export interface ComponentSchemas {
+      'shared.card': SharedCard;
+      'shared.card-grid': SharedCardGrid;
       'shared.contact-form': SharedContactForm;
       'shared.cta': SharedCta;
       'shared.faq': SharedFaq;
@@ -285,6 +360,10 @@ declare module '@strapi/strapi' {
       'shared.section': SharedSection;
       'shared.social-link': SharedSocialLink;
       'shared.social-media-feed': SharedSocialMediaFeed;
+      'shared.stat-band': SharedStatBand;
+      'shared.stat-item': SharedStatItem;
+      'shared.timeline': SharedTimeline;
+      'shared.timeline-item': SharedTimelineItem;
       'shared.upcoming-events': SharedUpcomingEvents;
       'shared.video-embed': SharedVideoEmbed;
     }

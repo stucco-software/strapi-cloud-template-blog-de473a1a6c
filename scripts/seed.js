@@ -891,6 +891,180 @@ async function main() {
     ...pub,
   });
 
+  // --- Policy & Advocacy (served flat at /advocacy via the catch-all) -------
+  // Was `frontend/src/pages/advocacy.astro`, ~720 hardcoded lines with zero CMS
+  // calls — the client flagged at the 2026-08-07 meeting that they could not
+  // edit it. Exercises the three new dynamic-zone components (shared.stat-band,
+  // shared.card-grid, shared.timeline) alongside hero/section.
+  //
+  // PLACEHOLDER copy is carried over verbatim from the mockup and is marked
+  // below; it is the client's to replace in the admin now that it is editable.
+  await docs('api::page.page').create({
+    data: {
+      title: 'Policy & Advocacy',
+      slug: 'advocacy',
+      description:
+        'AREAA advocates on behalf of the AANHPI community nationwide, focusing on the legislative issues critical to promoting sustainable homeownership.',
+      keywords: 'AREAA, advocacy, policy, AANHPI, homeownership, legislation',
+      components: [
+        {
+          __component: 'shared.hero',
+          eyebrow: 'Policy & Advocacy',
+          title: 'The Voice of The AANHPI Community',
+          body: [
+            p(
+              'The Asian Real Estate Association of America (AREAA) advocates on ' +
+                'behalf of the AANHPI community nationwide. AREAA focuses on ' +
+                'legislative issues that are critical to its mission: promoting ' +
+                'sustainable homeownership opportunities for the AANHPI community.'
+            ),
+          ],
+          figure: img,
+        },
+        {
+          __component: 'shared.stat-band',
+          items: [
+            { value: '20+', label: 'Years of Advocacy' },
+            { value: '18K+', label: 'Members Nationwide' },
+            { value: '40+', label: 'Local Chapters' },
+          ],
+        },
+        {
+          __component: 'shared.card-grid',
+          title: 'Current Policy Points',
+          items: [
+            {
+              title: 'Language Access',
+              body: [
+                p(
+                  'Language barriers are costing AANHPI borrowers homeownership ' +
+                    'opportunities. Research shows they face higher mortgage denial ' +
+                    'rates despite similar credit profiles to White peers — a ' +
+                    "disparity worsened by the recent removal of HUD's translation " +
+                    'resources.'
+                ),
+              ],
+              figure: img,
+            },
+            {
+              // PLACEHOLDER — the mockup repeated the Language Access text here.
+              title: 'Housing Supply',
+              body: [
+                p(
+                  'Placeholder copy — final Housing Supply messaging to come. This ' +
+                    "paragraph stands in for AREAA's position on expanding " +
+                    'attainable housing supply for AANHPI families.'
+                ),
+              ],
+              figure: img,
+            },
+            {
+              // PLACEHOLDER — the mockup repeated the Language Access text here.
+              title: 'Homeownership Rights',
+              body: [
+                p(
+                  'Placeholder copy — final Homeownership Rights messaging to come. ' +
+                    "This paragraph stands in for AREAA's position on protecting and " +
+                    'expanding fair access to homeownership.'
+                ),
+              ],
+              figure: img,
+            },
+          ],
+        },
+        {
+          __component: 'shared.section',
+          title: 'Our Three-Point Policy Plan',
+          body: [
+            // PLACEHOLDER — final lead-in copy to come.
+            p(
+              'Placeholder copy — a short lead-in describing the 2025 Three-Point ' +
+                'Policy Plan to boost AANHPI homeownership.'
+            ),
+          ],
+          primaryCta: cta('Download Our Three-Point Plan', '#', 'Primary'),
+          figure: img,
+        },
+        {
+          __component: 'shared.section',
+          title: 'The Policy Summit',
+          body: [
+            // PLACEHOLDER — final event copy to come.
+            p(
+              "Placeholder copy — an overview of AREAA's annual Policy Summit: who " +
+                'attends, what it advances, and why it matters to the AANHPI ' +
+                'community. Replace with final event copy.'
+            ),
+          ],
+          primaryCta: cta('View Event Page', '#', 'Primary'),
+          figure: img,
+        },
+        {
+          // Mockup order is preserved intentionally (2016, 2022, 2023, 2020) —
+          // it is not chronological in the design. All copy here is real.
+          __component: 'shared.timeline',
+          title: 'AREAA Advocacy at Work',
+          items: [
+            {
+              heading: '2016 - NoOther Campaign',
+              body: [
+                p(
+                  'AREAA successfully persuaded the US Census Bureau to track and ' +
+                    'include Asian housing data as a standalone category in its ' +
+                    'quarterly reports on homeownership by race and ethnicity.'
+                ),
+              ],
+            },
+            {
+              heading: '2022 - Preferred Language Field',
+              body: [
+                p(
+                  'AREAA worked with FHFA to include a Preferred Language Field on ' +
+                    'the 2020 redesigned URLA in order to better capture the needs ' +
+                    'of LEP borrowers. In 2019, the FHFA removed the question. AREAA ' +
+                    'continues to advocate for the reversal of its decision.'
+                ),
+              ],
+            },
+            {
+              heading: '2023 - Translation Clearinghouse',
+              body: [
+                p(
+                  'AREAA collaborated with the GSEs to create translated resources ' +
+                    'in Chinese for LEP borrowers. Korean, Vietnamese, and Tagalog ' +
+                    'are set to launch this year.'
+                ),
+              ],
+            },
+            {
+              heading: '2020 - Eliminating the 1% Rule',
+              body: [
+                p(
+                  'AREAA helped change underwriting standards to more fairly account ' +
+                    'for student loans that were in deferment when calculating a ' +
+                    "borrower's debt-to-income ratio."
+                ),
+              ],
+            },
+          ],
+        },
+        {
+          __component: 'shared.section',
+          title: 'Join the Movement',
+          body: [
+            p(
+              "There's power in numbers. Become part of the national voice for the " +
+                'AANHPI community and help shape the policies that determine who ' +
+                'gets to own a home in America.'
+            ),
+          ],
+          primaryCta: cta('Join Today', '/join', 'Primary'),
+        },
+      ],
+    },
+    ...pub,
+  });
+
   // --- global About page ---------------------------------------------------
   await docs('api::page.page').create({
     data: {
@@ -1166,7 +1340,7 @@ async function main() {
       `${committeeData.length + 2} committees, ` +
       `${nationalEvents.length + chapterData.length} events, ${resources.length} resources, ` +
       `${newsItems.length} news items, ${faqData.length} FAQs, ` +
-      `${2 + chapterData.length} pages, 3 single types.`
+      `${4 + chapterData.length} pages, 3 single types.`
   );
 
   await app.destroy();
