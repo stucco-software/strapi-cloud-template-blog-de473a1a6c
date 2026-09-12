@@ -48,7 +48,8 @@
         "shared.faq",
         "shared.stat-band",
         "shared.card-grid",
-        "shared.timeline"
+        "shared.timeline",
+        "shared.image-band"
       ]
     }
   }

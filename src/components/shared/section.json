@@ -12,6 +12,16 @@
     "body": {
       "type": "blocks"
     },
+    "layout": {
+      "type": "enumeration",
+      "enum": ["Default", "Split"],
+      "default": "Default"
+    },
+    "background": {
+      "type": "enumeration",
+      "enum": ["Default", "Muted"],
+      "default": "Default"
+    },
     "figure": {
       "type": "media",
       "multiple": false,

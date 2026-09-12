@@ -791,6 +791,7 @@ export interface ApiPagePage extends Struct.CollectionTypeSchema {
         'shared.stat-band',
         'shared.card-grid',
         'shared.timeline',
+        'shared.image-band',
       ]
     >;
     createdAt: Schema.Attribute.DateTime;

@@ -1,0 +1,21 @@
+{
+  "collectionName": "components_shared_image_bands",
+  "info": {
+    "displayName": "Image Band",
+    "icon": "landscape"
+  },
+  "options": {},
+  "attributes": {
+    "figure": {
+      "type": "media",
+      "multiple": false,
+      "allowedTypes": ["images"],
+      "required": true
+    },
+    "height": {
+      "type": "enumeration",
+      "enum": ["Standard", "Tall"],
+      "default": "Standard"
+    }
+  }
+}

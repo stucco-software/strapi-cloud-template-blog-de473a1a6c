@@ -125,6 +125,19 @@ export interface SharedHero extends Struct.ComponentSchema {
   };
 }
 
+export interface SharedImageBand extends Struct.ComponentSchema {
+  collectionName: 'components_shared_image_bands';
+  info: {
+    displayName: 'Image Band';
+    icon: 'landscape';
+  };
+  attributes: {
+    figure: Schema.Attribute.Media<'images'> & Schema.Attribute.Required;
+    height: Schema.Attribute.Enumeration<['Standard', 'Tall']> &
+      Schema.Attribute.DefaultTo<'Standard'>;
+  };
+}
+
 export interface SharedMemberGroup extends Struct.ComponentSchema {
   collectionName: 'components_shared_member_groups';
   info: {
@@ -227,8 +240,12 @@ export interface SharedSection extends Struct.ComponentSchema {
     icon: 'layout';
   };
   attributes: {
+    background: Schema.Attribute.Enumeration<['Default', 'Muted']> &
+      Schema.Attribute.DefaultTo<'Default'>;
     body: Schema.Attribute.Blocks;
     figure: Schema.Attribute.Media<'images' | 'files' | 'videos' | 'audios'>;
+    layout: Schema.Attribute.Enumeration<['Default', 'Split']> &
+      Schema.Attribute.DefaultTo<'Default'>;
     primaryCta: Schema.Attribute.Component<'shared.cta', false>;
     secondaryCta: Schema.Attribute.Component<'shared.cta', false>;
     title: Schema.Attribute.String;
@@ -350,6 +367,7 @@ declare module '@strapi/strapi' {
       'shared.form-field': SharedFormField;
       'shared.gallery': SharedGallery;
       'shared.hero': SharedHero;
+      'shared.image-band': SharedImageBand;
       'shared.member-group': SharedMemberGroup;
       'shared.nav-item': SharedNavItem;
       'shared.nav-link': SharedNavLink;

@@ -973,7 +973,10 @@ async function main() {
           ],
         },
         {
+          // Split row per the client mockup: heading/lead/CTA in a text column,
+          // the portrait plan cover beside it. Default (white) background.
           __component: 'shared.section',
+          layout: 'Split',
           title: 'Our Three-Point Policy Plan',
           body: [
             // PLACEHOLDER — final lead-in copy to come.
@@ -986,7 +989,10 @@ async function main() {
           figure: img,
         },
         {
+          // Same split, but on the mockup's grey ground rather than white.
           __component: 'shared.section',
+          layout: 'Split',
+          background: 'Muted',
           title: 'The Policy Summit',
           body: [
             // PLACEHOLDER — final event copy to come.
@@ -1059,6 +1065,13 @@ async function main() {
             ),
           ],
           primaryCta: cta('Join Today', '/join', 'Primary'),
+        },
+        {
+          // Closing full-bleed group photo, as in the mockup. Placeholder image
+          // until AREAA supplies the real one.
+          __component: 'shared.image-band',
+          figure: img,
+          height: 'Tall',
         },
       ],
     },
