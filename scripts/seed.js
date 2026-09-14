@@ -15,6 +15,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { createStrapi, compileStrapi } = require('@strapi/strapi');
+const {
+  backfillCapabilities,
+} = require('../src/api/member-capability/seed');
 
 // 1x1 PNG used as a stand-in for every media field.
 const PLACEHOLDER_PNG =
@@ -164,8 +167,28 @@ async function main() {
     .query('plugin::users-permissions.role')
     .findOne({ where: { type: 'authenticated' } });
 
+  // Chapter Admin exists by now: src/index.js bootstrap() creates it (and the
+  // three capabilities) on every boot, including this script's own boot. The
+  // seed wires chapter.administrators — SCOPE — for six members, but scope
+  // alone passes the route guards and then 403s behind every chapter-admin API
+  // call, so at least one seeded user needs the role too, or a fresh database
+  // has no working chapter admin to log in as.
+  const chapterAdminRole = await app.db
+    .query('plugin::users-permissions.role')
+    .findOne({ where: { type: 'chapter_admin' } });
+
+  if (!chapterAdminRole) {
+    throw new Error(
+      'The Chapter Admin role is missing. bootstrap() in src/index.js creates ' +
+        'it on boot — if it is absent, the boot failed and seeding would ' +
+        'produce a database with no chapter admin.'
+    );
+  }
+
   const memberData = [
+    // The seeded chapter admin for aloha-hawaii — see chapterAdmin below.
     { first: 'Mei', last: 'Tanaka', chapter: 'aloha-hawaii', status: 'Active', title: 'Chapter President',
+      chapterAdmin: true,
       memberSince: '2014-03-01', autoRenew: true, duesPaidThrough: '2027-07-20',
       location: 'Honolulu, HI', company: 'Aloha Realty Group', phone: '(808) 555-0142',
       postalCode: '96815', languages: 'English, Japanese', designations: 'CIPS, ABR',
@@ -205,7 +228,7 @@ async function main() {
       password: 'Password123!',
       provider: 'local',
       confirmed: true,
-      role: authRole.id,
+      role: m.chapterAdmin ? chapterAdminRole.id : authRole.id,
       firstName: m.first,
       lastName: m.last,
       displayName: `${m.first} ${m.last}`,
@@ -1344,6 +1367,15 @@ async function main() {
   console.log(
     `Public role: ${readActions.length} read actions ensured ` +
       `(${grantedCount} newly granted).`
+  );
+
+  // The capability that matches the role, so a freshly seeded chapter admin
+  // works on THIS boot rather than on the next one. bootstrap() runs the same
+  // backfill, but it ran before these users existed. Idempotent either way.
+  const linked = await backfillCapabilities(app);
+  console.log(
+    `Chapter admin: mei.tanaka@areaa.example (aloha-hawaii), ` +
+      `${linked} capability link(s) added.`
   );
 
   console.log(
