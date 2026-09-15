@@ -522,6 +522,7 @@ module.exports = {
     // this plan's own tests failed, and four more passed against a guard that
     // never reached the code they name.
     const hasExtras = Boolean(input.ctas) || input.figureId !== undefined
+      || Boolean(input.figure__clear)
       || input.members !== undefined || Boolean(input.members__present);
     let data = {};
     try {
@@ -632,14 +633,33 @@ module.exports = {
     const slotName = mediaSlotFor(pair.type);
     let figureId = null;
     let imageTargets = [];
-    if (input.figureId !== undefined && input.figureId !== null) {
+
+    // `figure__clear` is the same distinction `members__present` makes below: a
+    // form that CLEARED the image and a form that never carried one both arrive
+    // with no figureId, and only one of them should detach anything. An absent
+    // figureId can therefore never mean "remove" — hence the explicit flag.
+    const clearFigure = Boolean(input.figure__clear);
+    const attaching = input.figureId !== undefined && input.figureId !== null;
+
+    // Contradictory instructions are rejected rather than resolved. Picking a
+    // winner here means someone who checked "remove" and then chose a
+    // replacement gets one of the two silently ignored, and only finds out by
+    // looking at the live page.
+    if (clearFigure && attaching) {
+      return ctx.badRequest('Choose either a new image or removing the current one, not both');
+    }
+
+    if (clearFigure || attaching) {
       if (!slotName) return ctx.badRequest('This section has no image');
-      // A string is legitimate — the form posts one — but it must be a whole
-      // positive number.
-      figureId = Number(input.figureId);
-      if (!Number.isInteger(figureId) || figureId <= 0) {
-        return ctx.badRequest('That image could not be attached');
+      if (attaching) {
+        // A string is legitimate — the form posts one — but it must be a whole
+        // positive number.
+        figureId = Number(input.figureId);
+        if (!Number.isInteger(figureId) || figureId <= 0) {
+          return ctx.badRequest('That image could not be attached');
+        }
       }
+      // else: figureId stays null, which is what detaches the relation.
 
       imageTargets = [pair.draftId];
       if (pair.publishedId) {
