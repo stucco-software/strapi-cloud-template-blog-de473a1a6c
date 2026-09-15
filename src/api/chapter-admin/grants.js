@@ -54,6 +54,7 @@ const CHAPTER_ADMIN_ACTIONS = [
   'api::chapter-admin.chapter-admin.uploadMedia',
 
   'api::chapter-admin.chapter-admin.listMembers',
+  'api::chapter-admin.chapter-admin.listRoster',
 
   'api::chapter-admin.chapter-admin.getCommittee',
   'api::chapter-admin.chapter-admin.listCommittees',

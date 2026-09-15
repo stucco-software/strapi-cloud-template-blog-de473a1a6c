@@ -24,6 +24,7 @@ module.exports = {
     { method: 'POST',   path: '/chapter-admin/media',               handler: 'chapter-admin.uploadMedia' },
 
     { method: 'GET',    path: '/chapter-admin/members',             handler: 'chapter-admin.listMembers' },
+    { method: 'GET',    path: '/chapter-admin/roster',              handler: 'chapter-admin.listRoster' },
 
     { method: 'GET',    path: '/chapter-admin/committees',              handler: 'chapter-admin.listCommittees' },
     { method: 'GET',    path: '/chapter-admin/committees/:documentId',  handler: 'chapter-admin.getCommittee' },

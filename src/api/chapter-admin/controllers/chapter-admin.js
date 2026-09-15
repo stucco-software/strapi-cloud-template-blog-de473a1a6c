@@ -11,7 +11,8 @@ const { assertCapability } = require('../services/capabilities');
 const { SlugError } = require('../services/slug');
 const { BadInputError, pickWhitelisted } = require('../services/fields');
 const {
-  toDirectoryRow, normaliseMemberIds, assertMembersInChapter, resolveMemberRowIds,
+  toDirectoryRow, toRosterRow, normaliseMemberIds, assertMembersInChapter,
+  resolveMemberRowIds, ROSTER_FIELDS,
 } = require('../services/members');
 const { uploadImage } = require('../services/media');
 const {
@@ -210,6 +211,36 @@ module.exports = {
     });
 
     ctx.body = { data: rows.map(toDirectoryRow) };
+  }),
+
+  // --- membership roster -------------------------------------------------
+  // Read-only, and a SEPARATE endpoint from listMembers on purpose: that one
+  // feeds the committee picker, and widening its response would ship
+  // membership status to every screen that opens a picker.
+  //
+  // Same filters as the picker — `confirmed`, not `blocked` — so the two
+  // screens cannot disagree about who belongs to the chapter. An unconfirmed
+  // signup is not yet a member, and the directory takes the same view.
+  listRoster: declare('listRoster', 'chapter_admin', async (ctx) => {
+    const { chapter, error, notFound } = await resolveScopedChapter(ctx, ctx.query.chapterSlug);
+    if (error) return notFound ? ctx.notFound(error) : ctx.badRequest(error);
+
+    const rows = await strapi.documents('plugin::users-permissions.user').findMany({
+      filters: {
+        chapter: { documentId: chapter.documentId },
+        confirmed: true,
+        blocked: { $ne: true },
+      },
+      fields: ROSTER_FIELDS,
+      populate: { image: { fields: ['url'] } },
+      sort: ['lastName:asc', 'firstName:asc'],
+      limit: -1,
+    });
+
+    // The count ships alongside: the screen states the roster size, and
+    // deriving it from a list the client may later paginate is how a total
+    // starts quietly meaning "rows on this page".
+    ctx.body = { data: rows.map(toRosterRow), meta: { total: rows.length } };
   }),
 
   // --- chapter settings --------------------------------------------------

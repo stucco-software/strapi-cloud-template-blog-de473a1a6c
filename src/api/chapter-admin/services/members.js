@@ -24,6 +24,42 @@ function toDirectoryRow(user) {
 }
 
 /**
+ * The roster row: what a chapter admin may see about their own members.
+ *
+ * A SECOND whitelist, deliberately not a widening of MEMBER_FIELDS. That list
+ * feeds the committee picker, and a picker response has no business carrying
+ * membership status around the app just because one screen needs it.
+ *
+ * `status` is the one `private: true` field here, and it is in scope by an
+ * explicit ruling (J1, 2026-08-11): the client asked to see who is current and
+ * who has lapsed, which is the whole point of a roster. Every other private
+ * field is OUT and stays out — no email, phone, postalCode, duesPaidThrough or
+ * autoRenew. Dues dates especially: "Active" answers the question a chapter
+ * admin has, and a payment date is the finance module's business.
+ */
+const ROSTER_FIELDS = [
+  'documentId', 'firstName', 'lastName', 'displayName', 'title',
+  'company', 'location', 'languages', 'designations', 'status',
+];
+
+function toRosterRow(user) {
+  return {
+    documentId: user.documentId,
+    displayName:
+      user.displayName || `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim(),
+    title: user.title ?? '',
+    company: user.company ?? '',
+    location: user.location ?? '',
+    languages: user.languages ?? '',
+    designations: user.designations ?? '',
+    // May be null on a member who predates the field; the UI says "Unknown"
+    // rather than implying they are inactive.
+    status: user.status ?? null,
+    image: user.image?.url ?? null,
+  };
+}
+
+/**
  * Whatever the form sent -> a de-duplicated list of id strings.
  *
  * Accepts `['id']` or `[{documentId}]` so the caller is not coupled to how the
@@ -115,6 +151,6 @@ async function resolveMemberRowIds(strapiInstance, documentIds) {
 }
 
 module.exports = {
-  toDirectoryRow, normaliseMemberIds, assertMembersInChapter, resolveMemberRowIds,
-  MEMBER_FIELDS,
+  toDirectoryRow, toRosterRow, normaliseMemberIds, assertMembersInChapter,
+  resolveMemberRowIds, MEMBER_FIELDS, ROSTER_FIELDS,
 };
