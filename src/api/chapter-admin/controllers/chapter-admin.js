@@ -15,6 +15,7 @@ const {
   resolveMemberRowIds, ROSTER_FIELDS,
 } = require('../services/members');
 const { uploadImage } = require('../services/media');
+const { normaliseUrl } = require('../services/safe-url');
 const {
   toPartnerRow, normalisePartnerIds, findPartnerGroups,
 } = require('../services/partners');
@@ -52,6 +53,86 @@ const committees = chapterScopedResource({
     const ids = normaliseMemberIds(data.members);              // BadInputError -> 400
     await assertMembersInChapter(strapi, chapterDocumentId, ids); // ScopeError -> 403
     data.members = ids.map((documentId) => ({ documentId }));
+  },
+});
+
+// Sponsorship tiers. Chapter-OWNED: a tier with no `chapter` is national's and
+// this API never returns or touches it, so one chapter renaming "Gold" cannot
+// rename another's. `rank` orders them on the microsite; ties fall back to name.
+const partnerTiers = chapterScopedResource({
+  uid: 'api::partner-tier.partner-tier',
+  editableFields: ['name', 'rank'],
+  requiredFields: ['name'],
+  async validateData(data) {
+    if (!('rank' in data)) return;
+    // An edit form posts every field, so a cleared rank arrives as ''. Treat
+    // that as 0 rather than rejecting it — an unranked tier is a real thing,
+    // and `rank` is required:true in the schema so null would 500.
+    const raw = String(data.rank ?? '').trim();
+    if (raw === '') {
+      data.rank = 0;
+      return;
+    }
+    const rank = Number(raw);
+    if (!Number.isInteger(rank) || rank < 0 || rank > 9999) {
+      throw new BadInputError('Rank must be a whole number between 0 and 9999');
+    }
+    data.rank = rank;
+  },
+});
+
+// Partners a chapter owns outright — its own sponsors, with its own logos and
+// links. National partner rows are NOT editable here: they are shared by every
+// chapter and the national sponsor page, so a chapter changing one logo would
+// change it everywhere. Those can still be ATTACHED to a microsite through
+// updatePartners; this is the create/edit/delete path for a chapter's own.
+//
+// `logo` is required:true in the schema, and the id comes from the media
+// endpoint, which owns the magic-byte sniffing and the size cap.
+const chapterPartners = chapterScopedResource({
+  uid: 'api::partner.partner',
+  editableFields: ['name', 'url', 'logo', 'tier'],
+  requiredFields: ['name'],
+  listPopulate: {
+    logo: { fields: ['url', 'name'] },
+    // `documentId` explicitly: the edit form's tier <select> submits it, and a
+    // `fields` list that omits it leaves the current tier unselected on every
+    // row — the form would silently offer to untier a sponsor on save.
+    tier: { fields: ['documentId', 'name', 'rank'] },
+  },
+  async validateData(data, { chapterDocumentId, strapi: s }) {
+    if ('url' in data) {
+      const raw = String(data.url ?? '').trim();
+      // Empty clears it — a sponsor without a link is ordinary.
+      if (raw === '') {
+        data.url = null;
+      } else {
+        const safe = normaliseUrl(raw);
+        if (!safe) throw new BadInputError('That link is not a valid web address');
+        data.url = safe;
+      }
+    }
+
+    if ('tier' in data) {
+      const raw = String(data.tier ?? '').trim();
+      if (raw === '') {
+        data.tier = null;
+      } else {
+        // THE hole this closes: without it a chapter admin can file their
+        // partner under another chapter's tier, and that chapter's microsite
+        // then renders someone else's sponsor under its own heading.
+        const tier = await s.documents('api::partner-tier.partner-tier').findOne({
+          documentId: raw,
+          populate: { chapter: { fields: ['documentId'] } },
+          status: 'draft',
+        });
+        if (!tier) throw new BadInputError('That tier no longer exists');
+        if (tier.chapter?.documentId !== chapterDocumentId) {
+          throw new ScopeError('That tier belongs to another chapter');
+        }
+        data.tier = { documentId: raw };
+      }
+    }
   },
 });
 
@@ -320,6 +401,26 @@ module.exports = {
   // and writes the chapter home page's partner-group component relation —
   // which is what the public microsite actually renders. `chapter.partners`
   // exists but has no reader; see the plan's revision note.
+  // --- sponsorship tiers -------------------------------------------------
+  // A chapter's own tier structure and labels. National tiers (chapter null)
+  // are invisible here by construction — the factory scopes every read and
+  // write to the caller's chapter.
+  listTiers: declare('listTiers', 'chapter_admin', partnerTiers.list),
+  getTier: declare('getTier', 'chapter_admin', partnerTiers.getOne),
+  createTier: declare('createTier', 'chapter_admin', partnerTiers.create),
+  updateTier: declare('updateTier', 'chapter_admin', partnerTiers.update),
+  deleteTier: declare('deleteTier', 'chapter_admin', partnerTiers.delete),
+
+  // --- the chapter's own partners ----------------------------------------
+  // Distinct from listPartners/updatePartners below, which are about the
+  // national catalogue and which of it appears on the microsite. These own the
+  // rows themselves: a chapter's sponsors, its logos, its links.
+  listOwnPartners: declare('listOwnPartners', 'chapter_admin', chapterPartners.list),
+  getOwnPartner: declare('getOwnPartner', 'chapter_admin', chapterPartners.getOne),
+  createOwnPartner: declare('createOwnPartner', 'chapter_admin', chapterPartners.create),
+  updateOwnPartner: declare('updateOwnPartner', 'chapter_admin', chapterPartners.update),
+  deleteOwnPartner: declare('deleteOwnPartner', 'chapter_admin', chapterPartners.delete),
+
   listPartners: declare('listPartners', 'chapter_admin', async (ctx) => {
     // Scope-checked even though the catalogue is global: the screen belongs to
     // a chapter, and answering for one the caller cannot administer would leak
@@ -327,9 +428,24 @@ module.exports = {
     const { chapter, error, notFound } = await resolveScopedChapter(ctx, ctx.query.chapterSlug);
     if (error) return notFound ? ctx.notFound(error) : ctx.badRequest(error);
 
+    // National rows PLUS this chapter's own — never another chapter's.
+    //
+    // This filter became load-bearing the moment partners could be
+    // chapter-owned: an unfiltered catalogue now hands every chapter's sponsor
+    // list to every chapter admin, and offers them for attaching.
     const rows = await strapi.documents('api::partner.partner').findMany({
+      filters: {
+        $or: [
+          { chapter: { documentId: { $null: true } } },
+          { chapter: { documentId: chapter.documentId } },
+        ],
+      },
       fields: ['name', 'sponsorshipLevel'],
-      populate: { logo: { fields: ['url'] } },
+      populate: {
+        logo: { fields: ['url'] },
+        chapter: { fields: ['documentId'] },
+        tier: { fields: ['name', 'rank'] },
+      },
       sort: ['name:asc'],
       limit: -1,
       status: 'draft',

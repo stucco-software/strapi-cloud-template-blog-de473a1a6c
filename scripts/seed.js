@@ -119,6 +119,7 @@ async function main() {
     'api::resource.resource',
     'api::faq.faq',
     'api::partner.partner',
+    'api::partner-tier.partner-tier',
     'api::chapter.chapter',
   ];
   for (const uid of collectionUids) {
@@ -266,9 +267,53 @@ async function main() {
     );
   }
 
+  // --- chapter-owned tiers and sponsors ------------------------------------
+  // The five partners above are NATIONAL: no `chapter`, shared by every
+  // microsite and the national sponsor page, and not editable from a chapter
+  // screen. These are the other kind — a chapter's own tier structure, with
+  // its own labels and order, and a sponsor filed under one.
+  //
+  // aloha-hawaii only, deliberately: greater-chicago and boston are left with
+  // no tiers so the empty state is reachable without editing the seed.
+  const tierData = [
+    { name: 'Presenting', rank: 10 },
+    { name: 'Gold', rank: 20 },
+    { name: 'Community', rank: 30 },
+  ];
+  const alohaTiers = {};
+  for (const tier of tierData) {
+    alohaTiers[tier.name] = await docs('api::partner-tier.partner-tier').create({
+      data: { ...tier, chapter: chapters['aloha-hawaii'].documentId },
+      ...pub,
+    });
+  }
+
+  const chapterPartnerData = [
+    { name: 'Aloha Mortgage Co.', tier: 'Presenting', url: 'https://example.com/aloha-mortgage' },
+    { name: 'Island Title & Escrow', tier: 'Gold', url: 'https://example.com/island-title' },
+    // No tier and no url: both are optional, and the microsite has to render
+    // an untiered sponsor somewhere rather than dropping it.
+    { name: "Hale 'Aina Realty", tier: null, url: '' },
+  ];
+  for (const part of chapterPartnerData) {
+    partners.push(await docs('api::partner.partner').create({
+      data: {
+        name: part.name,
+        url: part.url || null,
+        logo: img,
+        chapter: chapters['aloha-hawaii'].documentId,
+        tier: part.tier ? alohaTiers[part.tier].documentId : null,
+      },
+      ...pub,
+    }));
+  }
+
   // --- back-fill chapter relations -----------------------------------------
+  // Indices into `partners`. 0-4 are the national rows; 5-7 are aloha's own,
+  // appended above — so aloha's microsite shows both kinds together, which is
+  // the case the grouped renderer has to get right.
   const chapterAssignments = {
-    'aloha-hawaii': { partners: [0, 1] },
+    'aloha-hawaii': { partners: [0, 1, 5, 6, 7] },
     'greater-chicago': { partners: [2, 3] },
     boston: { partners: [1, 4] },
   };
@@ -1324,6 +1369,11 @@ async function main() {
     'api::page.page',
     'api::event.event',
     'api::partner.partner',
+    // The microsite populates `partner.tier` through the page endpoint to group
+    // and label sponsors, and a populated relation needs its own public find —
+    // the same trap `member-group.members` documents. Without it every sponsor
+    // renders untiered, with no error anywhere.
+    'api::partner-tier.partner-tier',
     'api::committee.committee',
     'api::news-item.news-item',
     'api::resource.resource',

@@ -38,6 +38,18 @@ module.exports = {
     { method: 'PUT',    path: '/chapter-admin/news/:documentId',        handler: 'chapter-admin.updateNews' },
     { method: 'DELETE', path: '/chapter-admin/news/:documentId',        handler: 'chapter-admin.deleteNews' },
 
+    { method: 'GET',    path: '/chapter-admin/tiers',                     handler: 'chapter-admin.listTiers' },
+    { method: 'GET',    path: '/chapter-admin/tiers/:documentId',         handler: 'chapter-admin.getTier' },
+    { method: 'POST',   path: '/chapter-admin/tiers',                     handler: 'chapter-admin.createTier' },
+    { method: 'PUT',    path: '/chapter-admin/tiers/:documentId',         handler: 'chapter-admin.updateTier' },
+    { method: 'DELETE', path: '/chapter-admin/tiers/:documentId',         handler: 'chapter-admin.deleteTier' },
+
+    { method: 'GET',    path: '/chapter-admin/own-partners',              handler: 'chapter-admin.listOwnPartners' },
+    { method: 'GET',    path: '/chapter-admin/own-partners/:documentId',  handler: 'chapter-admin.getOwnPartner' },
+    { method: 'POST',   path: '/chapter-admin/own-partners',              handler: 'chapter-admin.createOwnPartner' },
+    { method: 'PUT',    path: '/chapter-admin/own-partners/:documentId',  handler: 'chapter-admin.updateOwnPartner' },
+    { method: 'DELETE', path: '/chapter-admin/own-partners/:documentId',  handler: 'chapter-admin.deleteOwnPartner' },
+
     { method: 'GET',    path: '/chapter-admin/chapter',                 handler: 'chapter-admin.getChapter' },
     { method: 'PUT',    path: '/chapter-admin/chapter',                 handler: 'chapter-admin.updateChapter' },
 

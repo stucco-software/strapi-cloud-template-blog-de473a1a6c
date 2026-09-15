@@ -16,7 +16,26 @@ describe('toPartnerRow', () => {
       logo: { url: '/uploads/chase.png' },
     })).toEqual({
       documentId: 'p1', name: 'Chase', sponsorshipLevel: 'Gold', logoUrl: '/uploads/chase.png',
+      owned: false, tier: null,
     });
+  });
+
+  it('reports a chapter-owned row as owned, with its tier', () => {
+    // `owned` decides whether the screen offers an edit control at all: a
+    // national row is shared with every chapter and the national sponsor page,
+    // so nobody edits it from a chapter screen.
+    const row = toPartnerRow({
+      documentId: 'p2', name: 'Aloha Mortgage', logo: { url: '/u/a.png' },
+      chapter: { documentId: 'ch1' }, tier: { name: 'Gold', rank: 20 },
+    });
+    expect(row.owned).toBe(true);
+    expect(row.tier).toEqual({ name: 'Gold', rank: 20 });
+  });
+
+  it('reports a national row as not owned, with no tier', () => {
+    const row = toPartnerRow({ documentId: 'p3', name: 'Chase', chapter: null });
+    expect(row.owned).toBe(false);
+    expect(row.tier).toBeNull();
   });
 
   it('tolerates a missing logo even though the schema requires one', () => {

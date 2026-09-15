@@ -811,6 +811,40 @@ export interface ApiPagePage extends Struct.CollectionTypeSchema {
   };
 }
 
+export interface ApiPartnerTierPartnerTier extends Struct.CollectionTypeSchema {
+  collectionName: 'partner_tiers';
+  info: {
+    description: 'A sponsorship tier. Chapter-owned when `chapter` is set; national when it is null.';
+    displayName: 'Partner Tier';
+    pluralName: 'partner-tiers';
+    singularName: 'partner-tier';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  attributes: {
+    chapter: Schema.Attribute.Relation<'manyToOne', 'api::chapter.chapter'>;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::partner-tier.partner-tier'
+    > &
+      Schema.Attribute.Private;
+    name: Schema.Attribute.String & Schema.Attribute.Required;
+    partners: Schema.Attribute.Relation<'oneToMany', 'api::partner.partner'>;
+    publishedAt: Schema.Attribute.DateTime;
+    rank: Schema.Attribute.Integer &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<0>;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
 export interface ApiPartnerPartner extends Struct.CollectionTypeSchema {
   collectionName: 'partners';
   info: {
@@ -823,6 +857,7 @@ export interface ApiPartnerPartner extends Struct.CollectionTypeSchema {
     draftAndPublish: true;
   };
   attributes: {
+    chapter: Schema.Attribute.Relation<'manyToOne', 'api::chapter.chapter'>;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
@@ -837,6 +872,10 @@ export interface ApiPartnerPartner extends Struct.CollectionTypeSchema {
     publishedAt: Schema.Attribute.DateTime;
     sponsorshipLevel: Schema.Attribute.Enumeration<
       ['Platinum', 'Gold', 'Silver', 'Bronze']
+    >;
+    tier: Schema.Attribute.Relation<
+      'manyToOne',
+      'api::partner-tier.partner-tier'
     >;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
@@ -1475,6 +1514,7 @@ declare module '@strapi/strapi' {
       'api::member-capability.member-capability': ApiMemberCapabilityMemberCapability;
       'api::news-item.news-item': ApiNewsItemNewsItem;
       'api::page.page': ApiPagePage;
+      'api::partner-tier.partner-tier': ApiPartnerTierPartnerTier;
       'api::partner.partner': ApiPartnerPartner;
       'api::resource.resource': ApiResourceResource;
       'api::top-nav.top-nav': ApiTopNavTopNav;

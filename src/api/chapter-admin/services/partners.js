@@ -5,12 +5,16 @@ const { BadInputError } = require('./fields');
 /**
  * What the attach/detach picker needs.
  *
- * Partners are global, public-facing records — name, logo and sponsorship level
- * already appear on every microsite that uses them — so there is no PII
- * question here, unlike services/members.js. The whitelist is for shape
- * stability, not secrecy.
+ * Partners are public-facing records — name, logo and sponsorship level already
+ * appear on every microsite that uses them — so there is no PII question here,
+ * unlike services/members.js. The whitelist is for shape stability, not secrecy.
+ *
+ * They are no longer all GLOBAL, though: a partner with a `chapter` belongs to
+ * that chapter, and `owned` is how the screen knows which rows it may edit.
  */
-const PARTNER_FIELDS = ['documentId', 'name', 'sponsorshipLevel', 'logoUrl'];
+const PARTNER_FIELDS = [
+  'documentId', 'name', 'sponsorshipLevel', 'logoUrl', 'owned', 'tier',
+];
 
 function toPartnerRow(partner) {
   return {
@@ -19,6 +23,12 @@ function toPartnerRow(partner) {
     sponsorshipLevel: partner.sponsorshipLevel ?? '',
     // `logo` is required:true, but a populate that omits it must not throw.
     logoUrl: partner.logo?.url ?? '',
+    // Whether THIS chapter owns the row, which decides whether the screen
+    // offers an edit control or only a checkbox. A national partner is shared
+    // with every other chapter and the national sponsor page, so nobody edits
+    // it from here.
+    owned: Boolean(partner.chapter),
+    tier: partner.tier ? { name: partner.tier.name ?? '', rank: partner.tier.rank ?? 0 } : null,
   };
 }
 

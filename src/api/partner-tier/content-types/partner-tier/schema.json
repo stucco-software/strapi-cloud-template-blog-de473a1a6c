@@ -1,0 +1,36 @@
+{
+  "kind": "collectionType",
+  "collectionName": "partner_tiers",
+  "info": {
+    "singularName": "partner-tier",
+    "pluralName": "partner-tiers",
+    "displayName": "Partner Tier",
+    "description": "A sponsorship tier. Chapter-owned when `chapter` is set; national when it is null."
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "name": {
+      "type": "string",
+      "required": true
+    },
+    "rank": {
+      "type": "integer",
+      "default": 0,
+      "required": true
+    },
+    "chapter": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::chapter.chapter"
+    },
+    "partners": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::partner.partner",
+      "mappedBy": "tier"
+    }
+  }
+}

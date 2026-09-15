@@ -71,6 +71,18 @@ const CHAPTER_ADMIN_ACTIONS = [
   'api::chapter-admin.chapter-admin.getChapter',
   'api::chapter-admin.chapter-admin.updateChapter',
 
+  'api::chapter-admin.chapter-admin.listTiers',
+  'api::chapter-admin.chapter-admin.getTier',
+  'api::chapter-admin.chapter-admin.createTier',
+  'api::chapter-admin.chapter-admin.updateTier',
+  'api::chapter-admin.chapter-admin.deleteTier',
+
+  'api::chapter-admin.chapter-admin.listOwnPartners',
+  'api::chapter-admin.chapter-admin.getOwnPartner',
+  'api::chapter-admin.chapter-admin.createOwnPartner',
+  'api::chapter-admin.chapter-admin.updateOwnPartner',
+  'api::chapter-admin.chapter-admin.deleteOwnPartner',
+
   'api::chapter-admin.chapter-admin.listPartners',
   'api::chapter-admin.chapter-admin.updatePartners',
   'api::chapter-admin.chapter-admin.getPage',
