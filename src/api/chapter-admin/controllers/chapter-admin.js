@@ -231,8 +231,14 @@ module.exports = {
     // `slug` is absent from this whitelist deliberately: it is a uid that will
     // not regenerate, and already-written event slug prefixes would not follow
     // it if it did.
-    const data = pickWhitelisted(input, ['name', 'email']);
-    if ('name' in data && data.name === '') return ctx.badRequest('name is required');
+    //
+    // `name` is absent for a different reason: the chapter's name is national's
+    // to set, not a chapter admin's. It appears on the national chapter list,
+    // in the member directory's chapter filter and on every member's profile,
+    // so a chapter renaming itself changes copy across the whole site. The
+    // field stays READ-ONLY in the admin UI and is rejected here too — the UI
+    // is a courtesy, this is the boundary.
+    const data = pickWhitelisted(input, ['email']);
 
     // `chapter.email` is an `email` attribute: Strapi rejects '' with "email
     // cannot be empty" (400) but accepts null. Without this an admin who empties
