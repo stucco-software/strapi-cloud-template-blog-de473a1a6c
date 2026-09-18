@@ -69,7 +69,38 @@ describe('editableFieldsFor', () => {
     const page = require2('../../src/api/page/content-types/page/schema.json');
     const zone = page.attributes.components.components;   // the dynamiczone list
 
-    expect(Object.keys(EDITABLE_BY_TYPE).sort()).toEqual([...zone].sort());
+    /*
+      Types in the zone that EDITABLE_BY_TYPE deliberately does not carry.
+
+      This used to be a strict equality against the whole zone, which could
+      never hold: page-content.js says in its own header that an unmapped type
+      renders READ-ONLY, and that is the correct outcome for a component with
+      no editable text at all. The equality broke the moment the advocacy
+      layout work added shared.image-band.
+
+      Listing the omissions instead keeps the invariant the equality was really
+      protecting — a NEW component must not slip in and silently default to
+      read-only — while letting a type be absent for a stated reason.
+
+      image-band and stat-band have no text field whatsoever: a media slot and
+      an enum, and a repeatable of stat items. There is nothing to offer.
+
+      card-grid and timeline DO each carry a `title`. They are unmapped because
+      they exist only on the national advocacy page — no chapter home page has
+      ever been seeded with one — so the heading belongs to national. If either
+      is ever placed on a chapter page, that heading becomes unowned and this
+      list is the thing to revisit.
+    */
+    const NO_CHAPTER_TEXT = [
+      'shared.card-grid', 'shared.image-band', 'shared.stat-band', 'shared.timeline',
+    ];
+
+    // Nothing in the map that is not a real component in the zone: catches a
+    // typo'd key and an entry left behind by a component national removed.
+    expect([...zone].sort()).toEqual(expect.arrayContaining(Object.keys(EDITABLE_BY_TYPE)));
+    // And nothing in the zone unaccounted for, in the map or in the list above.
+    expect([...zone].sort())
+      .toEqual([...Object.keys(EDITABLE_BY_TYPE), ...NO_CHAPTER_TEXT].sort());
 
     for (const [type, fields] of Object.entries(EDITABLE_BY_TYPE)) {
       const file = type.replace('shared.', '');

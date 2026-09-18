@@ -164,7 +164,13 @@ describe('chapter settings', () => {
     expect(res.body.data).not.toHaveProperty('administrators');
   });
 
-  it('actually persists a name change', async () => {
+  // Was "actually persists a name change". The name is national's to set: it
+  // appears on the national chapter list, in the directory's chapter filter and
+  // on every member's profile, so a chapter renaming itself rewrites copy across
+  // the whole site. updateChapter's whitelist is ['email'] alone, and this is
+  // now the mirror of the slug test below — the write succeeds, the field is
+  // simply dropped. The UI's read-only input is a courtesy; THIS is the boundary.
+  it('cannot change the name, even when the payload says so', async () => {
     const next = `${originalChapterName} ${RUN}`;
     const res = await auth(api().put('/api/chapter-admin/chapter'))
       .send({ chapterSlug: chapterA.slug, name: next });
@@ -172,7 +178,7 @@ describe('chapter settings', () => {
     expect(res.status).toBe(200);
     const stored = await strapi.documents('api::chapter.chapter')
       .findOne({ documentId: chapterA.documentId, fields: ['name'], status: 'draft' });
-    expect(stored.name).toBe(next);   // afterAll restores it
+    expect(stored.name).toBe(originalChapterName);
   });
 
   it('actually clears the contact email', async () => {

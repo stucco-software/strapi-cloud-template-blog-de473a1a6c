@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
-import { boot, shutdown, jwtFor, makeChapterAdmin, draftChapters } from './helpers.js';
+import {
+  boot, shutdown, jwtFor, makeChapterAdmin, draftChapters,
+  makePagelessChapter, dropChapter,
+} from './helpers.js';
 
 const RUN = Date.now();
 let strapi, chapterA, chapterB, tokenA, catalogue, groupsA, originalA;
@@ -88,8 +91,11 @@ describe('GET /api/chapter-admin/partners', () => {
     expect(res.status).toBe(200);
     expect(res.body.data.length).toBeGreaterThanOrEqual(2);
     for (const row of res.body.data) {
+      // `owned` says whether THIS chapter may edit the row or only attach it,
+      // and `tier` is what the microsite groups under. Both arrived with
+      // chapter-owned sponsors; the catalogue row is what a CHECKBOX needs.
       expect(Object.keys(row).sort())
-        .toEqual(['documentId', 'logoUrl', 'name', 'sponsorshipLevel']);
+        .toEqual(['documentId', 'logoUrl', 'name', 'owned', 'sponsorshipLevel', 'tier']);
     }
   });
 
@@ -215,21 +221,27 @@ describe('PUT /api/chapter-admin/partners', () => {
   });
 
   it('404s a chapter with no home page, rather than failing obscurely', async () => {
-    // `pdx` has none. Give the admin a real reason.
-    const noPage = await strapi.documents('api::chapter.chapter')
-      .findFirst({ filters: { slug: 'pdx' }, fields: ['slug'], status: 'draft' });
-    // Asserted, not skipped: `pdx` has no home page today, and if the seed
-    // changes this test must fail loudly rather than silently pass.
-    expect(noPage).toBeTruthy();
-    const admin = await makeChapterAdmin(strapi, {
-      email: `pt-nopage-${RUN}@areaa.test`, chapterIds: [noPage.id],
-    });
-    const token = await jwtFor(strapi, admin.id);
-    const res = await api().put('/api/chapter-admin/partners')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ chapterSlug: 'pdx', partners: [] });
-    expect(res.status).toBe(404);
-    expect(res.body.error?.message ?? '').toMatch(/no microsite page/i);
+    // A chapter with no home page must get a real reason, not an obscure error.
+    // Provisioned, not looked up. This asserted on a seeded `pdx` chapter that
+    // scripts/seed.js has never created — the fixture lived only in one
+    // developer's local database, so the test failed on a missing row instead
+    // of exercising the 404 it was written for. A chapter with no home page is
+    // cheap to make and belongs to the test that needs it.
+    const slug = `nopage-pt-${RUN}`;
+    const noPage = await makePagelessChapter(strapi, slug);
+    try {
+      const admin = await makeChapterAdmin(strapi, {
+        email: `pt-nopage-${RUN}@areaa.test`, chapterIds: [noPage.id],
+      });
+      const token = await jwtFor(strapi, admin.id);
+      const res = await api().put('/api/chapter-admin/partners')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ chapterSlug: slug, partners: [] });
+      expect(res.status).toBe(404);
+      expect(res.body.error?.message ?? '').toMatch(/no microsite page/i);
+    } finally {
+      await dropChapter(strapi, noPage.documentId);
+    }
   });
 
   it('never writes the Partner record itself', async () => {

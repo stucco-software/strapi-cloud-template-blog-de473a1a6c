@@ -58,9 +58,11 @@ describe('grantsFor', () => {
   });
 
   it('reproduces the shipped chapter-admin grant list exactly', () => {
-    // 30 distinct actions: the 5 authenticated + the 25 chapter-admin ones.
-    expect(CHAPTER_ADMIN_GRANTS).toHaveLength(30);
-    expect(new Set(CHAPTER_ADMIN_GRANTS).size).toBe(30);
+    // 41 distinct actions: the 5 authenticated + the 36 chapter-admin ones.
+    // Was 30/25 — chapter-owned sponsors added list/get/create/update/delete
+    // for both `tiers` and `own-partners`, plus the roster read.
+    expect(CHAPTER_ADMIN_GRANTS).toHaveLength(41);
+    expect(new Set(CHAPTER_ADMIN_GRANTS).size).toBe(41);
   });
 });
 
