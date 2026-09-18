@@ -81,6 +81,49 @@ export async function capabilityId(strapi, slug) {
 }
 
 /**
+ * Create a chapter that has NO home page, and return its DRAFT row.
+ *
+ * Provisioned rather than looked up. Three tests used to assert against a
+ * seeded `pdx` chapter, which scripts/seed.js has never created — it makes
+ * aloha-hawaii, greater-chicago and boston, and all three have home pages. The
+ * fixture only ever existed in one developer's local database, so the tests
+ * died the moment anyone rebuilt theirs, reporting a missing row rather than
+ * the 404 behaviour they were written to cover.
+ *
+ * Created at published status because that is what the seed does: `chapter` is
+ * draft-and-publish, so this writes BOTH rows and the caller gets the draft id
+ * — the one administeredChapters resolves against (see draftChapters above).
+ */
+export async function makePagelessChapter(strapi, slug) {
+  await strapi.documents('api::chapter.chapter')
+    .create({ data: { name: `No Page (${slug})`, slug }, status: 'published' });
+  const draft = await strapi.documents('api::chapter.chapter')
+    .findFirst({ filters: { slug }, fields: ['slug'], status: 'draft' });
+  if (!draft) throw new Error(`could not provision pageless chapter ${slug}`);
+  return draft;
+}
+
+/** Remove a chapter provisioned for one test, both statuses. */
+export async function dropChapter(strapi, documentId) {
+  await strapi.documents('api::chapter.chapter').delete({ documentId }).catch(() => {});
+}
+
+/**
+ * Create an ordinary member: the Authenticated role, no capabilities, no
+ * chapters. The baseline every authority test measures against.
+ */
+export async function makeMember(strapi, { email }) {
+  const role = await strapi
+    .query('plugin::users-permissions.role')
+    .findOne({ where: { type: 'authenticated' } });
+
+  return strapi.plugin('users-permissions').service('user').add({
+    username: email, email, password: 'Password123!', confirmed: true,
+    provider: 'local', firstName: 'Plain', lastName: 'Member', role: role.id,
+  });
+}
+
+/**
  * Create a chapter admin. `chapterIds` are numeric DRAFT entry ids.
  *
  * Capabilities must be attached explicitly. The boot-time backfill only sees

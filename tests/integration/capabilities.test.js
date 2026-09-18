@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createRequire } from 'node:module';
 import request from 'supertest';
 import {
-  boot, shutdown, draftChapters, jwtFor, makeChapterAdmin,
+  boot, shutdown, draftChapters, jwtFor, makeChapterAdmin, makeMember,
 } from './helpers.js';
 
 // src/ is CJS throughout; require it the same way tests/unit/grants.test.js does
@@ -305,9 +305,14 @@ describe('GET /api/users/me', () => {
   });
 
   it('returns an empty array, never undefined, for a plain member', async () => {
-    const member = await strapi.query('plugin::users-permissions.user')
-      .findOne({ where: { email: 'plainmember@areaa.test' } });
-    expect(member).toBeTruthy();
+    // Created here rather than looked up. This read a fixed
+    // `plainmember@areaa.test` that no seed has ever written, so it failed on a
+    // missing row rather than on the response shape it exists to pin. Tracked
+    // for teardown like every other account this file mints — the equivalence
+    // test below excludes post-boot users by design.
+    const member = track(await makeMember(strapi, {
+      email: `plainmember-${RUN}@areaa.test`,
+    }));
 
     const res = await request(strapi.server.httpServer)
       .get('/api/users/me')

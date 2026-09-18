@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
-import { boot, shutdown, jwtFor, makeChapterAdmin, draftChapters } from './helpers.js';
+import {
+  boot, shutdown, jwtFor, makeChapterAdmin, draftChapters,
+  makePagelessChapter, dropChapter,
+} from './helpers.js';
 
 const RUN = Date.now();
 let strapi, chapterA, chapterB, tokenA, sections, snapshot, zoneRows;
@@ -222,19 +225,25 @@ describe('GET /api/chapter-admin/page', () => {
   });
 
   it('404s a chapter with no home page', async () => {
-    const noPage = await strapi.documents('api::chapter.chapter')
-      .findFirst({ filters: { slug: 'pdx' }, fields: ['slug'], status: 'draft' });
-    // Asserted, not skipped: pdx has no home page today, and if that changes
-    // this test must fail loudly rather than quietly stop testing.
-    expect(noPage).toBeTruthy();
-    const admin = await makeChapterAdmin(strapi, {
-      email: `pg-nopage-${RUN}@areaa.test`, chapterIds: [noPage.id],
-    });
-    const token = await jwtFor(strapi, admin.id);
-    const res = await api().get('/api/chapter-admin/page?chapterSlug=pdx')
-      .set('Authorization', `Bearer ${token}`);
-    expect(res.status).toBe(404);
-    expect(res.body.error?.message ?? '').toMatch(/no microsite page/i);
+    // Provisioned, not looked up. This asserted on a seeded `pdx` chapter that
+    // scripts/seed.js has never created — the fixture lived only in one
+    // developer's local database, so the test failed on a missing row instead
+    // of exercising the 404 it was written for. A chapter with no home page is
+    // cheap to make and belongs to the test that needs it.
+    const slug = `nopage-pg-${RUN}`;
+    const noPage = await makePagelessChapter(strapi, slug);
+    try {
+      const admin = await makeChapterAdmin(strapi, {
+        email: `pg-nopage-${RUN}@areaa.test`, chapterIds: [noPage.id],
+      });
+      const token = await jwtFor(strapi, admin.id);
+      const res = await api().get(`/api/chapter-admin/page?chapterSlug=${slug}`)
+        .set('Authorization', `Bearer ${token}`);
+      expect(res.status).toBe(404);
+      expect(res.body.error?.message ?? '').toMatch(/no microsite page/i);
+    } finally {
+      await dropChapter(strapi, noPage.documentId);
+    }
   });
 });
 
