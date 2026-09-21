@@ -7,7 +7,23 @@
  * our own domain. Do not add 'image/svg+xml' to this list.
  */
 const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp', 'image/avif'];
-const MAX_BYTES = 5 * 1024 * 1024;
+
+/**
+ * 15MB, raised from 5MB for the chapter photo gallery (Mark, 2026-09-20).
+ *
+ * 5MB was chosen when the only upload was a single hero figure, which an admin
+ * picks deliberately and can resize first. A gallery is the opposite: chapter
+ * admins upload straight off a phone after an event, and a current iPhone
+ * photo is routinely 4-12MB, so 5MB rejected ORDINARY input.
+ *
+ * Kept under the 20MB `formidable` cap in `config/middlewares` on purpose —
+ * that one rejects at the transport layer, before this check can produce a
+ * readable message, so it must stay the larger of the two.
+ *
+ * The stored original is not what visitors download: Gallery.astro renders
+ * through Astro's <Image>, which serves a resized derivative.
+ */
+const MAX_BYTES = 15 * 1024 * 1024;
 
 /**
  * Pure. Takes the DETECTED mime (from image-sniff), never the declared one.

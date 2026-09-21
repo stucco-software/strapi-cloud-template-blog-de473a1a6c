@@ -31,8 +31,10 @@ module.exports = ({ env }) => [
     name: 'strapi::body',
     config: {
       // Reject oversized uploads at the transport layer. The chapter-admin
-      // media endpoint caps at 5MB; this stops a 200MB body being written to
-      // disk before that check ever runs. Headroom left for admin-panel uploads.
+      // media endpoint caps at 15MB; this stops a 200MB body being written to
+      // disk before that check ever runs. Headroom left for admin-panel
+      // uploads. MUST stay above the endpoint's own cap — this one rejects
+      // before `services/media.js` can produce a readable message.
       formidable: { maxFileSize: 20 * 1024 * 1024 },
     },
   },

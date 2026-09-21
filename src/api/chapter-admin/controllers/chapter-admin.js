@@ -22,6 +22,7 @@ const {
 const {
   editableFieldsFor, isPlainBlocks, shapeComponentEdit, findPageZones,
   blocksToText, sameForFields, ctaSlotsFor, shapeCtaEdit, CMPS_TABLE, mediaSlotFor,
+  photoSlotFor, normalisePhotoIds,
   memberSlotFor,
 } = require('../services/page-content');
 
@@ -541,11 +542,13 @@ module.exports = {
       const fields = editableFieldsFor(pair.type);
       const slot = mediaSlotFor(pair.type);
       const roster = memberSlotFor(pair.type);
+      const photoSlot = photoSlotFor(pair.type);
       const row = await strapi.db.query(pair.type).findOne({
         where: { id: pair.draftId },
         populate: {
           ...(slot ? { [slot]: true } : {}),
           ...(roster ? { [roster]: true } : {}),
+          ...(photoSlot ? { [photoSlot]: true } : {}),
         },
       });
 
@@ -574,6 +577,23 @@ module.exports = {
         // match the picker every other screen posts.
         members: roster
           ? { slot: roster, selected: (row?.[roster] ?? []).map((m) => m.documentId) }
+          : null,
+        // The gallery's current photos, IN ORDER — the editor renders them as
+        // the list it reorders and removes from, so it needs the url to show
+        // and the id to post back. Row ids, not documentIds: media files are
+        // not documents, and `figureId` on the same screen is already a row id.
+        photos: photoSlot
+          ? {
+            slot: photoSlot,
+            items: (row?.[photoSlot] ?? []).map((f) => ({
+              id: f.id,
+              url: f.url,
+              alt: f.alternativeText ?? '',
+              name: f.name ?? '',
+              width: f.width ?? null,
+              height: f.height ?? null,
+            })),
+          }
           : null,
       });
     }
@@ -639,7 +659,8 @@ module.exports = {
     // never reached the code they name.
     const hasExtras = Boolean(input.ctas) || input.figureId !== undefined
       || Boolean(input.figure__clear)
-      || input.members !== undefined || Boolean(input.members__present);
+      || input.members !== undefined || Boolean(input.members__present)
+      || input.photos !== undefined || Boolean(input.photos__present);
     let data = {};
     try {
       data = shapeComponentEdit(input, pair.type);
@@ -746,6 +767,46 @@ module.exports = {
       }
     }
 
+    // --- photos ------------------------------------------------------------
+    // The gallery's repeatable list. Written like the roster above and NOT
+    // like `figure` below: order is meaningful (it is the grid order), so the
+    // whole array goes in one write and `db.query` preserves it.
+    //
+    // `photos__present` carries the same distinction `members__present` does.
+    // An admin who removed the last photo and an admin whose form never had a
+    // gallery on it both arrive with no `photos`, and only the first should
+    // empty the slot. Without the flag, every text-only save on some OTHER
+    // section would read as "clear the photos".
+    const photoSlot = photoSlotFor(pair.type);
+    let photoIds = null;
+    let photoTargets = [];
+    if (input.photos__present || input.photos !== undefined) {
+      if (!photoSlot) return ctx.badRequest('This section has no photo gallery');
+      // BadInputError -> 400 via `guarded`.
+      photoIds = normalisePhotoIds(input.photos ?? []);
+
+      photoTargets = [pair.draftId];
+      if (pair.publishedId) {
+        // Its OWN parity gate, on its own field — the same reasoning as the
+        // roster and the figure. `Object.keys(data)` is empty on a photo-only
+        // save, so borrowing the text's comparison would compare nothing and
+        // wave the published write through.
+        //
+        // Compare the FILE ids in order, not the join rows: files_related_mph
+        // is delete+insert, so its row ids churn on every save and would
+        // report divergence after any earlier edit. Order is part of the
+        // comparison because a pure reorder IS a difference here.
+        const [dRow, pRow] = await Promise.all([
+          strapi.db.query(pair.type).findOne({
+            where: { id: pair.draftId }, populate: { [photoSlot]: true } }),
+          strapi.db.query(pair.type).findOne({
+            where: { id: pair.publishedId }, populate: { [photoSlot]: true } }),
+        ]);
+        const ids = (r) => (r?.[photoSlot] ?? []).map((m) => m.id).join(',');
+        if (!pair.ambiguous || ids(dRow) === ids(pRow)) photoTargets.push(pair.publishedId);
+      }
+    }
+
     const slotName = mediaSlotFor(pair.type);
     let figureId = null;
     let imageTargets = [];
@@ -839,6 +900,10 @@ module.exports = {
     for (const id of imageTargets) {
       await strapi.db.query(pair.type).update({ where: { id }, data: { [slotName]: figureId } });
     }
+    for (const id of photoTargets) {
+      // Same as the roster: the array's order is the order the grid renders in.
+      await strapi.db.query(pair.type).update({ where: { id }, data: { [photoSlot]: photoIds } });
+    }
     for (const id of rosterTargets) {
       // Order is meaningful — it is the order the roster renders in — and
       // `db.query` preserves the array it is given.
@@ -850,6 +915,7 @@ module.exports = {
     for (const c of ctaPlan) facets.push({ kind: 'button', slot: c.slot, wrote: c.writeBoth ? 2 : 1 });
     if (imageTargets.length > 0) facets.push({ kind: 'image', wrote: imageTargets.length });
     if (rosterTargets.length > 0) facets.push({ kind: 'members', wrote: rosterTargets.length });
+    if (photoTargets.length > 0) facets.push({ kind: 'photos', wrote: photoTargets.length });
 
     const live = facets.filter((f) => f.wrote === 2).length;
     const held = facets.filter((f) => f.wrote < 2).length;

@@ -7,6 +7,7 @@ const {
   EDITABLE_BY_TYPE, editableFieldsFor, isPlainBlocks, textToBlocks, blocksToText,
   shapeComponentEdit, pairZones, sameForFields, findPageZones,
   CTA_SLOTS, ctaSlotsFor, shapeCtaEdit, CMPS_TABLE,
+  PHOTO_SLOTS, photoSlotFor, normalisePhotoIds, MEDIA_SLOTS,
 } = require('../../src/api/chapter-admin/services/page-content.js');
 const { BadInputError } = require('../../src/api/chapter-admin/services/fields.js');
 
@@ -497,5 +498,64 @@ describe('CMPS_TABLE', () => {
     // for an unknown table and `getPage` filters nulls, so the runtime failure
     // is invisible. This test is the only loud one.
     expect(Object.keys(CMPS_TABLE).sort()).toEqual(Object.keys(CTA_SLOTS).sort());
+  });
+});
+
+describe('photoSlotFor', () => {
+  it('names the gallery slot', () => {
+    expect(photoSlotFor('shared.gallery')).toBe('photos');
+  });
+
+  it('is null for every other type, so a stray photo payload is a 400', () => {
+    for (const type of Object.keys(EDITABLE_BY_TYPE)) {
+      if (type === 'shared.gallery') continue;
+      expect(photoSlotFor(type)).toBeNull();
+    }
+  });
+
+  it('does NOT overlap the single-media slots', () => {
+    // The two write differently — one replaces an id, one writes an ordered
+    // array — so a type in both maps would take two contradictory paths
+    // through the same save.
+    for (const type of Object.keys(PHOTO_SLOTS)) {
+      expect(MEDIA_SLOTS[type]).toBeUndefined();
+    }
+  });
+});
+
+describe('normalisePhotoIds', () => {
+  it('keeps whole positive ids in the order given', () => {
+    // Order is the content: it is what the reorder boxes write.
+    expect(normalisePhotoIds([4, 9, 2])).toEqual([4, 9, 2]);
+  });
+
+  it('accepts the strings a form posts', () => {
+    expect(normalisePhotoIds(['4', '9'])).toEqual([4, 9]);
+  });
+
+  it('accepts an empty list — that is how an admin empties a gallery', () => {
+    expect(normalisePhotoIds([])).toEqual([]);
+  });
+
+  it('drops a duplicate rather than refusing the save', () => {
+    // A reorder across a re-upload of the same file can produce one, and a
+    // visitor seeing the photo twice is the bug — not the request.
+    expect(normalisePhotoIds([4, 9, 4])).toEqual([4, 9]);
+  });
+
+  it('keeps the FIRST position of a duplicated id', () => {
+    expect(normalisePhotoIds([9, 4, 9])).toEqual([9, 4]);
+  });
+
+  it.each([0, -1, 1.5, 'abc', null, undefined, {}, NaN])(
+    'refuses %p as an id', (bad) => {
+      expect(() => normalisePhotoIds([bad])).toThrow(BadInputError);
+    });
+
+  it('refuses a non-list outright', () => {
+    // `photos: "4"` would otherwise iterate a string into characters.
+    for (const bad of ['4', 4, null, undefined, {}]) {
+      expect(() => normalisePhotoIds(bad)).toThrow(BadInputError);
+    }
   });
 });

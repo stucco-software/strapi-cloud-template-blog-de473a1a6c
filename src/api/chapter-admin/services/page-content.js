@@ -327,12 +327,13 @@ const CMPS_TABLE = {
 };
 
 /**
- * Single-media slots a chapter admin may replace.
+ * SINGLE-media slots a chapter admin may replace.
  *
- * `gallery.photos` is deliberately absent: a repeatable list needs
- * add/remove/reorder, which is a different screen. `figure` is the one a
- * visitor actually looks at — every chapter hero is currently the same
- * placeholder.
+ * `gallery.photos` is absent here because it is repeatable, not because it is
+ * uneditable — see PHOTO_SLOTS below, which is its own path. A single slot is
+ * replace-or-clear; a list is add/remove/reorder, and the two cannot share a
+ * write. `figure` is the one a visitor always looks at — every chapter hero
+ * is currently the same placeholder.
  */
 const MEDIA_SLOTS = {
   'shared.hero': 'figure',
@@ -356,10 +357,60 @@ const MEMBER_SLOTS = {
 
 const memberSlotFor = (type) => MEMBER_SLOTS[type] ?? null;
 
+/**
+ * Which component types carry an editable repeatable PHOTO list.
+ *
+ * Modelled on MEMBER_SLOTS, not MEDIA_SLOTS, and that is the whole design:
+ * `photos` is an ordered repeatable relation, so it writes the same way a
+ * roster does — one array, whose order IS the render order and which
+ * `db.query` preserves — rather than the single-id replace `figure` uses.
+ *
+ * A type missing from this map has no photo list, and a save carrying one is
+ * a 400 rather than a silent no-op.
+ */
+const PHOTO_SLOTS = {
+  'shared.gallery': 'photos',
+};
+
+const photoSlotFor = (type) => PHOTO_SLOTS[type] ?? null;
+
+/**
+ * Submitted photo ids -> the row ids written to the slot.
+ *
+ * These are upload ids the /chapter-admin/media endpoint already returned, so
+ * the file is validated (byte-sniffed, size-capped) by the time it gets here;
+ * what is NOT yet checked is that the client sent whole positive numbers.
+ *
+ * Duplicates are dropped rather than rejected. The gallery editor can produce
+ * one by reordering across a re-upload of the same file, and a visitor seeing
+ * the photo twice is the bug — not the request.
+ *
+ * There is no chapter-scope check, deliberately and consistently with
+ * `figureId`: uploads land in one shared media library that has no chapter
+ * column to check against. The scope that matters is already enforced — the
+ * COMPONENT being written belongs to this chapter's page.
+ */
+function normalisePhotoIds(input) {
+  if (!Array.isArray(input)) throw new BadInputError('Photos must be a list');
+  const seen = new Set();
+  const ids = [];
+  for (const raw of input) {
+    const id = Number(raw);
+    if (!Number.isInteger(id) || id <= 0) {
+      throw new BadInputError('One of those photos could not be attached');
+    }
+    if (seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
 module.exports = {
   EDITABLE_BY_TYPE, editableFieldsFor, isPlainBlocks, textToBlocks, blocksToText,
   shapeComponentEdit, pairZones, sameForFields, findPageZones,
   CTA_SLOTS, ctaSlotsFor, shapeCtaEdit, CMPS_TABLE, MEDIA_SLOTS, mediaSlotFor,
   MEMBER_SLOTS, memberSlotFor,
+  PHOTO_SLOTS, photoSlotFor, normalisePhotoIds,
   MAX_BODY_LEN, MAX_TEXT_LEN,
 };
