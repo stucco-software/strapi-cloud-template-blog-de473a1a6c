@@ -93,6 +93,22 @@ async function main() {
   const app = await createStrapi(await compileStrapi()).load();
   app.log.level = 'error';
 
+  /*
+    Event dates RELATIVE to when the seed runs, never absolute.
+
+    Every event here was pinned to a 2026 calendar date, and they have all since
+    passed — so a chapter's only event sat in the past and its Upcoming Events
+    section rendered empty, while the page still looked populated because the
+    one national event that happened to remain in the future was attached to it.
+    A fixture that silently expires is worse than no fixture: the bug it creates
+    looks like a code bug, and it appears months after anyone touched the seed.
+  */
+  const inDays = (days, hour = 17) => {
+    const d = new Date(Date.now() + days * 86400000);
+    d.setUTCHours(hour, 0, 0, 0);
+    return d.toISOString();
+  };
+
   const docs = (uid) => app.documents(uid);
   const pub = { status: 'published' };
 
@@ -465,8 +481,8 @@ async function main() {
     data: {
       title: '2026 AREAA Policy Summit',
       slug: '2026-areaa-policy-summit',
-      startsAt: '2026-05-09T16:00:00.000Z',
-      endsAt: '2026-05-09T21:00:00.000Z',
+      startsAt: inDays(45, 16),
+      endsAt: inDays(45, 21),
       location: 'Washington, DC',
       memberPrice: 0,
       publicPrice: 0,
@@ -479,7 +495,7 @@ async function main() {
     data: {
       title: 'State of Asia America Report Webinar',
       slug: 'state-of-asia-america-report-webinar',
-      startsAt: '2026-11-20T19:00:00.000Z',
+      startsAt: inDays(120, 19),
       location: 'Online',
       locationUrl: 'https://example.com/webinar/state-of-asia-america',
       memberPrice: 0,
@@ -491,13 +507,15 @@ async function main() {
   });
   const nationalEvents = [policySummit, reportWebinar];
 
-  // A chapter-scoped event apiece, for richer sample data.
+  // A chapter-scoped event apiece, for richer sample data. Captured by slug:
+  // each chapter's home page attaches its OWN event, not national's.
+  const chapterEvents = {};
   for (const slug of Object.keys(chapters)) {
-    await docs('api::event.event').create({
+    chapterEvents[slug] = await docs('api::event.event').create({
       data: {
         title: `${chapters[slug].name} Summer Mixer`,
         slug: `${slug}-summer-mixer`,
-        startsAt: '2026-08-12T01:30:00.000Z',
+        startsAt: inDays(21, 1),
         location: `${chapters[slug].name} — venue TBD`,
         memberPrice: 20,
         publicPrice: 40,
@@ -1199,10 +1217,19 @@ async function main() {
             primaryCta: cta('Learn More', '/about', 'Primary'),
           },
           {
+            // The chapter's OWN event. This attached `nationalEvents`, so every
+            // chapter microsite advertised the Policy Summit and the report
+            // webinar while its own mixer appeared nowhere.
+            //
+            // The frontend no longer reads this relation on a chapter page — it
+            // queries the chapter's upcoming events, because a chapter admin
+            // cannot edit a relation and creating an event never attached it
+            // here. Seeding it correctly anyway: an editor opening this page in
+            // /admin should not see another chapter's content listed.
             __component: 'shared.upcoming-events',
             title: 'Upcoming Events',
             link: cta('View All Events', '/events', 'Secondary'),
-            events: nationalEvents.map((e) => e.documentId),
+            events: [chapterEvents[slug].documentId],
           },
           {
             __component: 'shared.social-media-feed',
@@ -1210,16 +1237,33 @@ async function main() {
             platform: 'Instagram',
             feedUrl: `https://instagram.com/areaa-${slug}`,
           },
+          /*
+            NO shared.video-embed on the chapter template (Mark, 2026-09-18).
+
+            It was seeded as "Chapter Highlights" pointing at
+            youtube.com/embed/example-chapter — an id that can never embed, so
+            the component correctly refused to frame it and degraded to a bare
+            link. Every chapter page therefore carried a heading, the words
+            "Watch this video" and a caption, describing a video that did not
+            exist. The component and its renderer stay; national can add one to
+            a chapter page. Note videoUrl is national-only to edit, so a chapter
+            admin could not have supplied the missing video themselves.
+          */
           {
-            __component: 'shared.video-embed',
-            title: 'Chapter Highlights',
-            videoUrl: 'https://youtube.com/embed/example-chapter',
-            caption: 'A look at recent chapter events.',
-          },
-          {
+            /*
+              Seeded with NO photos (Mark, 2026-09-18), which is how a real
+              chapter starts. `photos: [img]` attached the 1x1 PLACEHOLDER_PNG
+              every other fixture uses, and a gallery cell stretches it into a
+              solid pink block — so every chapter's public page carried a Photo
+              Gallery heading above one meaningless rectangle.
+
+              Gallery.astro already guards on photos.length > 0, so an empty one
+              renders nothing publicly. It stays in the zone because the chapter
+              admin's editing screen still needs to offer it.
+            */
             __component: 'shared.gallery',
             title: 'Photo Gallery',
-            photos: [img],
+            photos: [],
           },
           {
             __component: 'shared.section',
